@@ -1,0 +1,7 @@
+*.out
+*.zip
+/tools/*.*
+/tools/*/*.*
+/tools/*/*/*.*
+/tools/target/*
+__pycache__
