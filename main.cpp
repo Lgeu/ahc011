@@ -618,6 +618,16 @@ const auto kBoxDrawings =
     array<string, 16>{" ", "╸", "╹", "┛", "╺", "━", "┗", "┻",
                       "╻", "┓", "┃", "┫", "┏", "┳", "┣", "╋"};
 
+auto ComputeStat(const int n, const Board<int, 10, 10>& tiles) {
+    auto stat = array<int, 16>();
+    for (auto y = 0; y < n; y++) {
+        for (auto x = 0; x < n; x++) {
+            stat[tiles[{y, x}]]++;
+        }
+    }
+    return stat;
+}
+
 // ランダムに全域木をつくる
 auto RandomSpaningTree(const int n) {
     static auto rng = Random(123478654);
@@ -1164,6 +1174,290 @@ auto SwapSearch(const int n, const Board<int, 10, 10>& initial_tiles) {
     }
 }
 
+void PrintTiles(const int n, const Board<int, 10, 10>& b) {
+    b.Print();
+    for (auto y = 0; y < n; y++) {
+        for (auto x = 0; x < n; x++) {
+            cout << kBoxDrawings[b[{y, x}]];
+        }
+        cout << endl;
+    }
+}
+
+// どこかの辺を切って、どこかの辺を足す
+auto ConsistSpanningTreeSearch(const int n, const array<int, 16>& target_stat) {
+    struct Edge {
+        Point from, to;
+    };
+    static auto rng = Random(123478654);
+    auto tiles = RandomSpaningTree(n);
+    auto stat = array<int, 16>();
+    for (auto y = 0; y < n; y++) {
+        for (auto x = 0; x < n; x++) {
+            stat[tiles[{y, x}]]++;
+        }
+    }
+    for (auto trial = 0ll;; trial++) {
+        if (trial % 1024 == 1) {
+            tiles = RandomSpaningTree(n);
+            stat = ComputeStat(n, tiles);
+        }
+        if ((trial & trial - 1) == 0) {
+            cout << "trial " << trial << endl;
+            PrintTiles(n, tiles);
+            for (auto c : stat)
+                cout << c << " ";
+            cout << endl;
+            for (auto c : target_stat)
+                cout << c << " ";
+            cout << endl;
+        }
+
+        {
+            // 切る
+            auto best = 1;
+            auto best_edges = vector<Edge>();
+            for (auto y = 0; y < n; y++) {
+                for (auto x = 0; x < n; x++) {
+                    if (x < n - 1 && tiles[{y, x}] & kR) {
+                        auto gain = 0;
+
+                        const auto l = Point{y, x};
+                        const auto tile_l = tiles[l];
+                        gain += stat[tile_l] > target_stat[tile_l];
+                        const auto new_tile_l = tile_l ^ kR;
+                        assert(new_tile_l < tile_l);
+                        gain += stat[new_tile_l] < target_stat[new_tile_l];
+
+                        const auto r = Point{y, x + 1};
+                        const auto tile_r = tiles[r];
+                        gain += stat[tile_r] > target_stat[tile_r];
+                        const auto new_tile_r = tile_r ^ kL;
+                        assert(new_tile_r < tile_r);
+                        gain += stat[new_tile_r] < target_stat[new_tile_r];
+
+                        if (gain == best) {
+                            best_edges.push_back(Edge{l, r});
+                        } else if (gain > best) {
+                            best = gain;
+                            best_edges.clear();
+                            best_edges.push_back({l, r});
+                        }
+                    }
+                    if (y < n - 1 && tiles[{y, x}] & kD) {
+                        auto gain = 0;
+
+                        const auto u = Point{y, x};
+                        const auto tile_u = tiles[u];
+                        gain += stat[tile_u] > target_stat[tile_u];
+                        const auto new_tile_u = tile_u ^ kD;
+                        assert(new_tile_u < tile_u);
+                        gain += stat[new_tile_u] < target_stat[new_tile_u];
+
+                        const auto d = Point{y + 1, x};
+                        const auto tile_d = tiles[d];
+                        gain += stat[tile_d] > target_stat[tile_d];
+                        const auto new_tile_d = tile_d ^ kU;
+                        assert(new_tile_d < tile_d);
+                        gain += stat[new_tile_d] < target_stat[new_tile_d];
+
+                        if (gain == best) {
+                            best_edges.push_back({u, d});
+                        } else if (gain > best) {
+                            best = gain;
+                            best_edges.clear();
+                            best_edges.push_back({u, d});
+                        }
+                    }
+                }
+            }
+            // if ((trial & trial - 1) == 0) {
+            //     cout << "best_edges.size() " << best_edges.size() << endl;
+            // }
+            if (best_edges.size() == 0) {
+                return tiles;
+            }
+
+            // {
+            //     // sanity check
+            //     auto s = ComputeStat(n, tiles);
+            //     if (s != stat) {
+            //         assert(false);
+            //     }
+            // }
+
+            const auto rnd = rng.randint((int)best_edges.size());
+            const auto edge = best_edges[rnd];
+            if (edge.from.x < edge.to.x) {
+                auto& tile_l = tiles[edge.from];
+                auto& tile_r = tiles[edge.to];
+                stat[tile_l]--;
+                stat[tile_r]--;
+                tile_l ^= kR;
+                tile_r ^= kL;
+                stat[tile_l]++;
+                stat[tile_r]++;
+            } else {
+                auto& tile_u = tiles[edge.from];
+                auto& tile_d = tiles[edge.to];
+                stat[tile_u]--;
+                stat[tile_d]--;
+                tile_u ^= kD;
+                tile_d ^= kU;
+                stat[tile_u]++;
+                stat[tile_d]++;
+            }
+            // {
+            //     // sanity check
+            //     auto s = ComputeStat(n, tiles);
+            //     if (s != stat) {
+            //         assert(false);
+            //     }
+            // }
+        }
+        {
+            // 足す
+
+            // 0 を特別扱いすべきなのか微妙
+            // if(stat[0] >= 2){
+            //     assert(stat[0] == 2);
+            //     for(auto y=0; y<n; y++){
+            //         for(auto x=0; x<n; x++){
+
+            //         }
+            //     }
+            // }
+
+            // DFS
+            auto region = Board<int, 10, 10>();
+            auto region_cnt = 1;
+            for (auto y = 0; y < n; y++) {
+                for (auto x = 0; x < n; x++) {
+                    if (region[{y, x}])
+                        continue;
+                    region[{y, x}] = region_cnt;
+                    auto stk = vector<Point>{Point{y, x}};
+                    while (stk.size()) {
+                        const auto v = stk.back();
+                        stk.pop_back();
+                        const auto tile = tiles[v];
+                        if (tile & kD) {
+                            const auto u = Point{v.y + 1, v.x};
+                            if (region[u] == 0) {
+                                region[u] = region_cnt;
+                                stk.push_back(u);
+                            }
+                        }
+                        if (tile & kR) {
+                            const auto u = Point{v.y, v.x + 1};
+                            if (region[u] == 0) {
+                                region[u] = region_cnt;
+                                stk.push_back(u);
+                            }
+                        }
+                        if (tile & kU) {
+                            const auto u = Point{v.y - 1, v.x};
+                            if (region[u] == 0) {
+                                region[u] = region_cnt;
+                                stk.push_back(u);
+                            }
+                        }
+                        if (tile & kL) {
+                            const auto u = Point{v.y, v.x - 1};
+                            if (region[u] == 0) {
+                                region[u] = region_cnt;
+                                stk.push_back(u);
+                            }
+                        }
+                    }
+                    region_cnt++;
+                }
+            }
+            assert(region_cnt == 4);
+
+            auto best = 0;
+            auto best_edges = vector<Edge>();
+            for (auto y = 0; y < n; y++) {
+                for (auto x = 0; x < n; x++) {
+                    if (x < n - 1 && region[{y, x}] != region[{y, x + 1}]) {
+                        auto gain = 0;
+
+                        const auto l = Point{y, x};
+                        const auto tile_l = tiles[l];
+                        gain += stat[tile_l] > target_stat[tile_l];
+                        const auto new_tile_l = tile_l ^ kR;
+                        assert(new_tile_l > tile_l);
+                        gain += stat[new_tile_l] < target_stat[new_tile_l];
+
+                        const auto r = Point{y, x + 1};
+                        const auto tile_r = tiles[r];
+                        gain += stat[tile_r] > target_stat[tile_r];
+                        const auto new_tile_r = tile_r ^ kL;
+                        assert(new_tile_r > tile_r);
+                        gain += stat[new_tile_r] < target_stat[new_tile_r];
+
+                        if (gain == best) {
+                            best_edges.push_back(Edge{l, r});
+                        } else if (gain > best) {
+                            best = gain;
+                            best_edges.clear();
+                            best_edges.push_back({l, r});
+                        }
+                    }
+                    if (y < n - 1 && region[{y, x}] != region[{y + 1, x}]) {
+                        auto gain = 0;
+
+                        const auto u = Point{y, x};
+                        const auto tile_u = tiles[u];
+                        gain += stat[tile_u] > target_stat[tile_u];
+                        const auto new_tile_u = tile_u ^ kD;
+                        assert(new_tile_u > tile_u);
+                        gain += stat[new_tile_u] < target_stat[new_tile_u];
+
+                        const auto d = Point{y + 1, x};
+                        const auto tile_d = tiles[d];
+                        gain += stat[tile_d] > target_stat[tile_d];
+                        const auto new_tile_d = tile_d ^ kU;
+                        assert(new_tile_d > tile_d);
+                        gain += stat[new_tile_d] < target_stat[new_tile_d];
+
+                        if (gain == best) {
+                            best_edges.push_back({u, d});
+                        } else if (gain > best) {
+                            best = gain;
+                            best_edges.clear();
+                            best_edges.push_back({u, d});
+                        }
+                    }
+                }
+            }
+            assert(best_edges.size() > 0);
+
+            const auto rnd = rng.randint((int)best_edges.size());
+            const auto edge = best_edges[rnd];
+            if (edge.from.x < edge.to.x) {
+                auto& tile_l = tiles[edge.from];
+                auto& tile_r = tiles[edge.to];
+                stat[tile_l]--;
+                stat[tile_r]--;
+                tile_l ^= kR;
+                tile_r ^= kL;
+                stat[tile_l]++;
+                stat[tile_r]++;
+            } else {
+                auto& tile_u = tiles[edge.from];
+                auto& tile_d = tiles[edge.to];
+                stat[tile_u]--;
+                stat[tile_d]--;
+                tile_u ^= kD;
+                tile_d ^= kU;
+                stat[tile_u]++;
+                stat[tile_d]++;
+            }
+        }
+    }
+}
+
 struct Input {
     int N, T;
     Board<int, 10, 10> tiles;
@@ -1183,22 +1477,7 @@ struct Input {
     }
 };
 
-void PrintTiles(const int n, const Board<int, 10, 10>& b) {
-    b.Print();
-    for (auto y = 0; y < n; y++) {
-        for (auto x = 0; x < n; x++) {
-            cout << kBoxDrawings[b[{y, x}]];
-        }
-        cout << endl;
-    }
-}
-
 auto TestSearchSpanningTree() {
-    // const auto b = SearchSpanningTree(
-    //     n, array<int, 16>{1, 3, 2, 6, 2, 1, 2, 1, 3, 2, 3, 0, 5, 1, 2, 2});
-    // const auto b = FlowSearch(
-    //     n, array<int, 16>{1, 3, 2, 6, 2, 1, 2, 1, 3, 2, 3, 0, 5, 1, 2, 2});
-
     auto input = Input();
     input.Read();
 
@@ -1211,17 +1490,18 @@ auto TestSearchSpanningTree() {
     }
 
     {
+        // const auto t0 = Time();
+        // const auto b = FlowSearch(input.N, input.stat);
+        // const auto t1 = Time() - t0;
+        // PrintTiles(input.N, b);
+        // cout << "t1=" << t1 << endl;
+    } {
         const auto t0 = Time();
-        const auto b = FlowSearch(input.N, input.stat);
+        const auto b = ConsistSpanningTreeSearch(input.N, input.stat);
         const auto t1 = Time() - t0;
         PrintTiles(input.N, b);
         cout << "t1=" << t1 << endl;
     }
-
-    // const auto b = SwapSearch(input.N, input.tiles);
-
-    // const auto b = WiseSearch(
-    //     n, array<int, 16>{1, 3, 2, 6, 2, 1, 2, 1, 3, 2, 3, 0, 5, 1, 2, 2});
 }
 
 int main() {
