@@ -922,6 +922,95 @@ auto RandomTargetTree(const int n, const array<int, 16>& target_stat) {
     }
 }
 
+auto NaiveAssignment(const int n, const Board<int, 50, 50>& A) {
+    auto best = numeric_limits<int>::max();
+    static auto permutation = array<int, 10>();
+    iota(permutation.begin(), permutation.end(), 0);
+    do {
+        auto score = 0;
+        for (auto y = 0; y < n; y++) {
+            const auto x = permutation[y];
+            score += A[{y + 1, x + 1}];
+        }
+        chmin(best, score);
+    } while (next_permutation(permutation.begin(), permutation.begin() + n));
+    return best;
+}
+
+// ハンガリアン法
+// 参考: https://ei1333.github.io/luzhiled/snippets/graph/hungarian.html
+auto Hungarian(const int n, const Board<int, 50, 50>& A) {
+    // A は 1-based
+    using T = int;
+    const T infty = numeric_limits<T>::max();
+    const int H = n + 1;
+    const int W = n + 1;
+    static auto P = array<int, 50>();
+    fill(P.begin(), P.begin() + W, 0);
+    static auto way = array<int, 50>();
+    fill(way.begin(), way.begin() + W, 0);
+    static auto U = array<int, 50>(); // 行 y の引いた数
+    fill(U.begin(), U.begin() + H, 0);
+    static auto V = array<int, 50>(); // 列 x の引いた数
+    fill(V.begin(), V.begin() + W, 0);
+    static auto minV = array<int, 50>(); // 列内の最小値
+    static auto used = array<bool, 50>();
+
+    for (int y = 1; y < H; y++) {
+        P[0] = y;
+        fill(minV.begin(), minV.begin() + W, infty);
+        fill(used.begin(), used.begin() + W, false);
+        int x0 = 0;
+        while (P[x0] != 0) {
+            const int y0 = P[x0];
+            used[x0] = true;
+            T delta = infty; // まだ処理してない部分全体の最小値
+            int x1 = 0;      // delta の場所
+            for (int x = 1; x < W; x++) {
+                if (used[x])
+                    continue;
+                const T curr = A[{y0, x}] - U[y0] - V[x];
+                if (curr < minV[x])
+                    minV[x] = curr, way[x] = x0;
+                if (minV[x] < delta)
+                    delta = minV[x], x1 = x;
+            }
+            for (int x = 0; x < W; x++) {
+                if (used[x])
+                    U[P[x]] += delta, V[x] -= delta;
+                else
+                    minV[x] -= delta;
+            }
+            x0 = x1;
+        }
+        do {
+            P[x0] = P[way[x0]];
+            x0 = way[x0];
+        } while (x0 != 0);
+    }
+    return -V[0];
+}
+
+void TestHungarian() {
+    static auto rng = Random(1935831850);
+    auto A = Board<int, 50, 50>();
+    for (auto trial = 0; trial < 10000; trial++) {
+        for (auto&& x : A.data) {
+            x = rng.randint(20);
+        }
+        for (auto i = 1; i <= 9; i++) {
+            auto t0 = Time();
+            auto a1 = NaiveAssignment(i, A);
+            auto t1 = Time();
+            auto a2 = Hungarian(i, A);
+            auto t2 = Time();
+            // cout << "Naive:     " << a1 << " " << t1 - t0 << endl;
+            // cout << "Hungarian: " << a2 << " " << t2 - t1 << endl;
+            assert(a1 == a2);
+        }
+    }
+}
+
 struct Input {
     int N, T;
     Board<int, 10, 10> tiles;
@@ -953,4 +1042,7 @@ auto TestSearchSpanningTree() {
     assert(ComputeStat(input.N, b) == input.stat);
 }
 
-int main() { TestSearchSpanningTree(); }
+int main() {
+    // TestSearchSpanningTree();
+    TestHungarian();
+}
