@@ -1381,7 +1381,56 @@ struct State {
     int parent;
 };
 
-auto state_buffer = Stack<State, 100000>();
+auto state_buffer = Stack<State, 1000000>(); // 500 MB
+
+struct StateAction {
+    HashType hash; // 遷移先の状態のハッシュ
+    short changed_h;
+    int parent;
+    unsigned char to; // 0 のタイルの移動先 y/x 4 ビットずつ
+
+    inline auto G() const { return state_buffer[parent].g + 1; }
+    inline auto H() const {
+        const auto& state = state_buffer[parent];
+        return state.h + changed_h -
+               state.hs[state.tiles[{to >> 4, to & 0b1111}]];
+    }
+    inline auto F() const { return G() + H(); }
+
+    inline auto ToState() const {
+        const auto& old_state = state_buffer[parent];
+        auto state = State();
+        state.tiles = old_state.tiles;
+
+        const auto tmp = state.tiles[{old_state.positions[0] >> 4,
+                                      old_state.positions[0] & 0b1111}] == 0;
+        assert(tmp);
+        const auto tile_type = state.tiles[{to >> 4, to & 0b1111}];
+        assert(tile_type != 0);
+        state.tiles[{old_state.positions[0] >> 4,
+                     old_state.positions[0] & 0b1111}] = tile_type;
+        state.tiles[{to >> 4, to & 0b1111}] = 0;
+        state.hash = hash;
+        state.parent = parent;
+        state.hs = old_state.hs;
+        state.hs[tile_type] = changed_h;
+        state.positions = old_state.positions;
+        for (auto i = input.tile_type_separations[tile_type];
+             i < input.tile_type_separations[tile_type + 1]; i++) {
+            if (state.positions[i] == to) {
+                swap(state.positions[0], state.positions[i]);
+                goto break_ok;
+            }
+        }
+        assert(false);
+    break_ok:
+        state.g = G();
+        state.h = H();
+        state.f = state.g + state.h;
+
+        return state;
+    }
+};
 
 template <class TilesType>
 auto ComputeHash(const int n, const TilesType& tiles) {
@@ -1404,7 +1453,10 @@ template <class TilesType> auto ComputePositions(const TilesType& tiles) {
 // ヒューリスティック関数の計算
 auto ComputeH(const State& state, const State& target_state,
               const int tile_type) {
+    assert(tile_type != 0);
     static auto cost_matrix = Board<int, 50, 50>();
+    if (input.stat[tile_type] == 0)
+        return 0;
     for (auto i = input.tile_type_separations[tile_type];
          i < input.tile_type_separations[tile_type + 1]; i++) {
         const auto yx = state.positions[i];
@@ -1423,8 +1475,8 @@ auto ComputeH(const State& state, const State& target_state,
 
 // A* 探索
 auto NaiveAStar() {
-    auto hash_to_buffer_index = map<HashType, int>();
-    auto q = radix_heap::pair_radix_heap<short, HashType>();
+    auto searched_hashes = set<HashType>(); // 距離が確定
+    auto q = radix_heap::pair_radix_heap<short, StateAction>(); //
 
     // 目標状態
     auto target_state = State();
@@ -1438,17 +1490,73 @@ auto NaiveAStar() {
     initial_state.hash = ComputeHash(input.N, initial_state.tiles);
     initial_state.positions = ComputePositions(initial_state.tiles);
     initial_state.g = 0;
+    initial_state.h = 0;
+    for (auto i = 1; i < 16; i++) {
+        initial_state.h += initial_state.hs[i] =
+            ComputeH(initial_state, target_state, i);
+    }
+    initial_state.f = initial_state.g + initial_state.h;
+    initial_state.parent = -1;
 
-    // q.push();
+    state_buffer.push(initial_state);
+    searched_hashes.insert(initial_state.hash);
+
+    for (const auto d : {Point{0, 1}, {1, 0}, {0, -1}, {-1, 0}}) {
+        auto action = StateAction();
+        auto p_char = initial_state.positions[0];
+        const auto v = Point{p_char >> 4, p_char & 0b1111};
+        const auto u = v + d;
+        if (!(0 <= u.x && u.x < input.N && 0 <= u.y && u.y < input.N))
+            continue;
+        action.parent = 0;
+        action.to = (unsigned char)(u.y << 4 | u.x);
+        auto tile_type = initial_state.tiles[u];
+        action.hash = initial_state.hash ^ hash_table[v.y][v.x][tile_type] ^
+                      hash_table[u.y][u.x][tile_type];
+        swap(initial_state.tiles[v], initial_state.tiles[u]);
+        action.changed_h = ComputeH(initial_state, target_state, tile_type);
+        swap(initial_state.tiles[v], initial_state.tiles[u]);
+        q.push(action.F(), action);
+    }
+
+    while (q.size()) {
+        const auto fv = q.top_key();
+        const auto v = q.top_value();
+        q.pop();
+        if (searched_hashes.find(v.hash) != searched_hashes.end())
+            continue;
+        auto state = State();
+
+        // TODO
+        for (const auto& d : {Point{0, 1}, {1, 0}, {0, -1}, {-1, 0}}) {
+            auto action = StateAction();
+            auto p_char = initial_state.positions[0];
+            const auto v = Point{p_char >> 4, p_char & 0b1111};
+            const auto u = v + d;
+            if (!(0 <= u.x && u.x < input.N && 0 <= u.y && u.y < input.N))
+                continue;
+            action.parent = 0;
+            action.to = (unsigned char)(u.y << 4 | u.x);
+            auto tile_type = initial_state.tiles[u];
+            action.hash = initial_state.hash ^ hash_table[v.y][v.x][tile_type] ^
+                          hash_table[u.y][u.x][tile_type];
+            swap(initial_state.tiles[v], initial_state.tiles[u]);
+            action.changed_h = ComputeH(initial_state, target_state, tile_type);
+            swap(initial_state.tiles[v], initial_state.tiles[u]);
+            q.push(action.F(), action);
+            // TODO: 修正
+        }
+
+        // TODO
+    }
 }
 
 auto Initialize() {
     input.Read();
     for (auto&& t : hash_table)
         for (auto&& tt : t)
-            for (auto&& ttt : tt)
-                ttt = rng.next();
-    //
+            for (auto i = 1; i < 16; i++)
+                tt[i] = rng.next();
 }
 
 int main() {
