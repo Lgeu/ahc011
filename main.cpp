@@ -605,13 +605,358 @@ template <int max_n, int max_m> struct Graph {
     }
 };
 
+#ifdef _MSC_VER
+inline unsigned int __builtin_clz(const unsigned int& x) {
+    unsigned long r;
+    _BitScanReverse(&r, x);
+    return 31 - r;
+}
+inline unsigned long long __builtin_clzll(const unsigned long long& x) {
+    unsigned long r;
+    _BitScanReverse64(&r, x);
+    return 63 - r;
+}
+#endif
+#pragma warning(disable : 4146)
+/*
+iwi 先生の radix heap (https://github.com/iwiwi/radix-heap)
+The MIT License (MIT)
+Copyright (c) 2015 Takuya Akiba
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions: The above copyright notice and this
+permission notice shall be included in all copies or substantial portions of the
+Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+*/
+namespace radix_heap {
+namespace internal {
+template <bool Is64bit> class find_bucket_impl;
+
+template <> class find_bucket_impl<false> {
+  public:
+    static inline constexpr size_t find_bucket(uint32_t x, uint32_t last) {
+        return x == last ? 0 : 32 - __builtin_clz(x ^ last);
+    }
+};
+
+template <> class find_bucket_impl<true> {
+  public:
+    static inline constexpr size_t find_bucket(uint64_t x, uint64_t last) {
+        return x == last ? 0 : 64 - __builtin_clzll(x ^ last);
+    }
+};
+
+template <typename T> inline constexpr size_t find_bucket(T x, T last) {
+    return find_bucket_impl<sizeof(T) == 8>::find_bucket(x, last);
+}
+
+template <typename KeyType, bool IsSigned> class encoder_impl_integer;
+
+template <typename KeyType> class encoder_impl_integer<KeyType, false> {
+  public:
+    typedef KeyType key_type;
+    typedef KeyType unsigned_key_type;
+
+    inline static constexpr unsigned_key_type encode(key_type x) { return x; }
+
+    inline static constexpr key_type decode(unsigned_key_type x) { return x; }
+};
+
+template <typename KeyType> class encoder_impl_integer<KeyType, true> {
+  public:
+    typedef KeyType key_type;
+    typedef typename std::make_unsigned<KeyType>::type unsigned_key_type;
+
+    inline static constexpr unsigned_key_type encode(key_type x) {
+        return static_cast<unsigned_key_type>(x) ^
+               (unsigned_key_type(1) << unsigned_key_type(
+                    std::numeric_limits<unsigned_key_type>::digits - 1));
+    }
+
+    inline static constexpr key_type decode(unsigned_key_type x) {
+        return static_cast<key_type>(
+            x ^ (unsigned_key_type(1)
+                 << (std::numeric_limits<unsigned_key_type>::digits - 1)));
+    }
+};
+
+template <typename KeyType, typename UnsignedKeyType>
+class encoder_impl_decimal {
+  public:
+    typedef KeyType key_type;
+    typedef UnsignedKeyType unsigned_key_type;
+
+    inline static constexpr unsigned_key_type encode(key_type x) {
+        return raw_cast<key_type, unsigned_key_type>(x) ^
+               ((-(raw_cast<key_type, unsigned_key_type>(x) >>
+                   (std::numeric_limits<unsigned_key_type>::digits - 1))) |
+                (unsigned_key_type(1)
+                 << (std::numeric_limits<unsigned_key_type>::digits - 1)));
+    }
+
+    inline static constexpr key_type decode(unsigned_key_type x) {
+        return raw_cast<unsigned_key_type, key_type>(
+            x ^
+            (((x >> (std::numeric_limits<unsigned_key_type>::digits - 1)) - 1) |
+             (unsigned_key_type(1)
+              << (std::numeric_limits<unsigned_key_type>::digits - 1))));
+    }
+
+  private:
+    template <typename T, typename U> union raw_cast {
+      public:
+        constexpr raw_cast(T t) : t_(t) {}
+        operator U() const { return u_; }
+
+      private:
+        T t_;
+        U u_;
+    };
+};
+
+template <typename KeyType>
+class encoder
+    : public encoder_impl_integer<KeyType, std::is_signed<KeyType>::value> {};
+template <>
+class encoder<float> : public encoder_impl_decimal<float, uint32_t> {};
+template <>
+class encoder<double> : public encoder_impl_decimal<double, uint64_t> {};
+} // namespace internal
+
+template <typename KeyType, typename EncoderType = internal::encoder<KeyType>>
+class radix_heap {
+  public:
+    typedef KeyType key_type;
+    typedef EncoderType encoder_type;
+    typedef typename encoder_type::unsigned_key_type unsigned_key_type;
+
+    radix_heap() : size_(0), last_(), buckets_() {
+        buckets_min_.fill(std::numeric_limits<unsigned_key_type>::max());
+    }
+
+    void push(key_type key) {
+        const unsigned_key_type x = encoder_type::encode(key);
+        assert(last_ <= x);
+        ++size_;
+        const size_t k = internal::find_bucket(x, last_);
+        buckets_[k].emplace_back(x);
+        buckets_min_[k] = std::min(buckets_min_[k], x);
+    }
+
+    key_type top() {
+        pull();
+        return encoder_type::decode(last_);
+    }
+
+    void pop() {
+        pull();
+        buckets_[0].pop_back();
+        --size_;
+    }
+
+    size_t size() const { return size_; }
+
+    bool empty() const { return size_ == 0; }
+
+    void clear() {
+        size_ = 0;
+        last_ = key_type();
+        for (auto& b : buckets_)
+            b.clear();
+        buckets_min_.fill(std::numeric_limits<unsigned_key_type>::max());
+    }
+
+    void swap(radix_heap<KeyType, EncoderType>& a) {
+        std::swap(size_, a.size_);
+        std::swap(last_, a.last_);
+        buckets_.swap(a.buckets_);
+        buckets_min_.swap(a.buckets_min_);
+    }
+
+  private:
+    size_t size_;
+    unsigned_key_type last_;
+    std::array<std::vector<unsigned_key_type>,
+               std::numeric_limits<unsigned_key_type>::digits + 1>
+        buckets_;
+    std::array<unsigned_key_type,
+               std::numeric_limits<unsigned_key_type>::digits + 1>
+        buckets_min_;
+
+    void pull() {
+        assert(size_ > 0);
+        if (!buckets_[0].empty())
+            return;
+
+        size_t i;
+        for (i = 1; buckets_[i].empty(); ++i)
+            ;
+        last_ = buckets_min_[i];
+
+        for (unsigned_key_type x : buckets_[i]) {
+            const size_t k = internal::find_bucket(x, last_);
+            buckets_[k].emplace_back(x);
+            buckets_min_[k] = std::min(buckets_min_[k], x);
+        }
+        buckets_[i].clear();
+        buckets_min_[i] = std::numeric_limits<unsigned_key_type>::max();
+    }
+};
+
+template <typename KeyType, typename ValueType,
+          typename EncoderType = internal::encoder<KeyType>>
+class pair_radix_heap {
+  public:
+    typedef KeyType key_type;
+    typedef ValueType value_type;
+    typedef EncoderType encoder_type;
+    typedef typename encoder_type::unsigned_key_type unsigned_key_type;
+
+    pair_radix_heap() : size_(0), last_(), buckets_() {
+        buckets_min_.fill(std::numeric_limits<unsigned_key_type>::max());
+    }
+
+    void push(key_type key, const value_type& value) {
+        const unsigned_key_type x = encoder_type::encode(key);
+        assert(last_ <= x);
+        ++size_;
+        const size_t k = internal::find_bucket(x, last_);
+        buckets_[k].emplace_back(x, value);
+        buckets_min_[k] = std::min(buckets_min_[k], x);
+    }
+
+    void push(key_type key, value_type&& value) {
+        const unsigned_key_type x = encoder_type::encode(key);
+        assert(last_ <= x);
+        ++size_;
+        const size_t k = internal::find_bucket(x, last_);
+        buckets_[k].emplace_back(x, std::move(value));
+        buckets_min_[k] = std::min(buckets_min_[k], x);
+    }
+
+    template <class... Args> void emplace(key_type key, Args&&... args) {
+        const unsigned_key_type x = encoder_type::encode(key);
+        assert(last_ <= x);
+        ++size_;
+        const size_t k = internal::find_bucket(x, last_);
+        buckets_[k].emplace_back(std::piecewise_construct,
+                                 std::forward_as_tuple(x),
+                                 std::forward_as_tuple(args...));
+        buckets_min_[k] = std::min(buckets_min_[k], x);
+    }
+
+    key_type top_key() {
+        pull();
+        return encoder_type::decode(last_);
+    }
+
+    value_type& top_value() {
+        pull();
+        return buckets_[0].back().second;
+    }
+
+    void pop() {
+        pull();
+        buckets_[0].pop_back();
+        --size_;
+    }
+
+    size_t size() const { return size_; }
+
+    bool empty() const { return size_ == 0; }
+
+    void clear() {
+        size_ = 0;
+        last_ = key_type();
+        for (auto& b : buckets_)
+            b.clear();
+        buckets_min_.fill(std::numeric_limits<unsigned_key_type>::max());
+    }
+
+    void swap(pair_radix_heap<KeyType, ValueType, EncoderType>& a) {
+        std::swap(size_, a.size_);
+        std::swap(last_, a.last_);
+        buckets_.swap(a.buckets_);
+        buckets_min_.swap(a.buckets_min_);
+    }
+
+  private:
+    size_t size_;
+    unsigned_key_type last_;
+    std::array<std::vector<std::pair<unsigned_key_type, value_type>>,
+               std::numeric_limits<unsigned_key_type>::digits + 1>
+        buckets_;
+    std::array<unsigned_key_type,
+               std::numeric_limits<unsigned_key_type>::digits + 1>
+        buckets_min_;
+
+    void pull() {
+        assert(size_ > 0);
+        if (!buckets_[0].empty())
+            return;
+
+        size_t i;
+        for (i = 1; buckets_[i].empty(); ++i)
+            ;
+        last_ = buckets_min_[i];
+
+        for (size_t j = 0; j < buckets_[i].size(); ++j) {
+            const unsigned_key_type x = buckets_[i][j].first;
+            const size_t k = internal::find_bucket(x, last_);
+            buckets_[k].emplace_back(std::move(buckets_[i][j]));
+            buckets_min_[k] = std::min(buckets_min_[k], x);
+        }
+        buckets_[i].clear();
+        buckets_min_[i] = std::numeric_limits<unsigned_key_type>::max();
+    }
+};
+} // namespace radix_heap
+
 // =========================== ここまでライブラリ ===========================
+
+struct Input {
+    int N, T;
+    Board<int, 10, 10> tiles;
+    array<int, 16> stat;
+    array<signed char, 17> tile_type_separations;
+
+    void Read() {
+        cin >> N >> T;
+        string tmp;
+        fill(stat.begin(), stat.end(), 0);
+        for (auto y = 0; y < N; y++) {
+            cin >> tmp;
+            for (auto x = 0; x < N; x++) {
+                tiles[{y, x}] =
+                    tmp[x] <= '9' ? tmp[x] - '0' : tmp[x] - 'a' + 10;
+                stat[tiles[{y, x}]]++;
+            }
+        }
+        auto cum_stat = 0;
+        tile_type_separations[0] = 0;
+        for (auto i = 0; i < 16; i++) {
+            cum_stat += stat[i];
+            tile_type_separations[i + 1] = cum_stat;
+        }
+    }
+};
 
 using Point = Vec2<int>;
 constexpr auto kL = 1;
 constexpr auto kU = 2;
 constexpr auto kR = 4;
 constexpr auto kD = 8;
+auto input = Input();
+static auto rng = Random(913418416u);
 
 const auto kBoxDrawings =
     array<string, 16>{" ", "╸", "╹", "┛", "╺", "━", "┗", "┻",
@@ -1011,28 +1356,7 @@ void TestHungarian() {
     }
 }
 
-struct Input {
-    int N, T;
-    Board<int, 10, 10> tiles;
-    array<int, 16> stat;
-    void Read() {
-        cin >> N >> T;
-        string tmp;
-        fill(stat.begin(), stat.end(), 0);
-        for (auto y = 0; y < N; y++) {
-            cin >> tmp;
-            for (auto x = 0; x < N; x++) {
-                tiles[{y, x}] =
-                    tmp[x] <= '9' ? tmp[x] - '0' : tmp[x] - 'a' + 10;
-                stat[tiles[{y, x}]]++;
-            }
-        }
-    }
-};
-
 auto TestSearchSpanningTree() {
-    auto input = Input();
-    input.Read();
 
     const auto t0 = Time();
     const auto b = RandomTargetTree(input.N, input.stat);
@@ -1042,7 +1366,93 @@ auto TestSearchSpanningTree() {
     assert(ComputeStat(input.N, b) == input.stat);
 }
 
+using HashType = unsigned;
+auto hash_table = array<array<array<HashType, 16>, 10>, 10>();
+
+struct State {
+    Board<int, 10, 10> tiles;
+    HashType hash; // 衝突するとどうなる？？？
+    short f;       // g + h
+    short g;       // 現在までの距離
+    short h;       // ヒューリスティック関数
+    array<short, 16> hs; // ヒューリスティック関数 (タイルの種類ごと)
+    array<unsigned char, 100>
+        positions; // タイルの種類ごとの場所 y/x 4 ビットずつ
+    int parent;
+};
+
+auto state_buffer = Stack<State, 100000>();
+
+template <class TilesType>
+auto ComputeHash(const int n, const TilesType& tiles) {
+    auto result = (HashType)0;
+    for (auto y = 0; y < n; y++)
+        for (auto x = 0; x < n; x++)
+            result += hash_table[y][x][tiles[{y, x}]];
+    return result;
+}
+
+template <class TilesType> auto ComputePositions(const TilesType& tiles) {
+    auto result = array<unsigned char, 100>();
+    auto indices = input.tile_type_separations;
+    for (auto y = 0; y < input.N; y++)
+        for (auto x = 0; x < input.N; x++)
+            result[indices[tiles[{y, x}]]++] = (unsigned char)(y << 4 & x);
+    return result;
+}
+
+// ヒューリスティック関数の計算
+auto ComputeH(const State& state, const State& target_state,
+              const int tile_type) {
+    static auto cost_matrix = Board<int, 50, 50>();
+    for (auto i = input.tile_type_separations[tile_type];
+         i < input.tile_type_separations[tile_type + 1]; i++) {
+        const auto yx = state.positions[i];
+        const auto y = yx >> 4;
+        const auto x = yx & 0b1111;
+        for (auto j = input.tile_type_separations[tile_type];
+             j < input.tile_type_separations[tile_type + 1]; j++) {
+            const auto target_yx = target_state.positions[j];
+            const auto target_y = target_yx >> 4;
+            const auto target_x = target_yx & 0b1111;
+            cost_matrix[{i + 1, j + 1}] = abs(y - target_y) + abs(x - target_x);
+        }
+    }
+    return Hungarian(input.stat[tile_type], cost_matrix);
+}
+
+// A* 探索
+auto NaiveAStar() {
+    auto hash_to_buffer_index = map<HashType, int>();
+    auto q = radix_heap::pair_radix_heap<short, HashType>();
+
+    // 目標状態
+    auto target_state = State();
+    target_state.tiles = RandomSpaningTree(input.N);
+    target_state.hash = ComputeHash(input.N, target_state.tiles);
+    target_state.positions = ComputePositions(target_state.tiles);
+
+    // 初期状態生成
+    auto initial_state = State();
+    initial_state.tiles = input.tiles;
+    initial_state.hash = ComputeHash(input.N, initial_state.tiles);
+    initial_state.positions = ComputePositions(initial_state.tiles);
+    initial_state.g = 0;
+
+    // q.push();
+}
+
+auto Initialize() {
+    input.Read();
+    for (auto&& t : hash_table)
+        for (auto&& tt : t)
+            for (auto&& ttt : tt)
+                ttt = rng.next();
+    //
+}
+
 int main() {
+    Initialize();
     // TestSearchSpanningTree();
     TestHungarian();
 }
