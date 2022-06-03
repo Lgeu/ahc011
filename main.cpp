@@ -605,8 +605,7 @@ template <int max_n, int max_m> struct Graph {
     }
 };
 
-// =========================================== ここまでライブラリ
-// ===========================================
+// =========================== ここまでライブラリ ===========================
 
 using Point = Vec2<int>;
 constexpr auto kL = 1;
@@ -618,6 +617,7 @@ const auto kBoxDrawings =
     array<string, 16>{" ", "╸", "╹", "┛", "╺", "━", "┗", "┻",
                       "╻", "┓", "┃", "┫", "┏", "┳", "┣", "╋"};
 
+// タイルの個数を数える
 auto ComputeStat(const int n, const Board<int, 10, 10>& tiles) {
     auto stat = array<int, 16>();
     for (auto y = 0; y < n; y++) {
@@ -667,513 +667,6 @@ auto RandomSpaningTree(const int n) {
     return tiles;
 }
 
-// ランダムに全域木を作ったときのタイルの数をばーって
-auto TileCountStats() {
-    constexpr auto sample_size = 10;
-    constexpr auto n = 6;
-    auto stats = map<array<int, 16>, int>();
-    for (auto i = 0; i < sample_size; i++) {
-        const auto tiles = RandomSpaningTree(n);
-        auto stat = array<int, 16>();
-        for (auto y = 0; y < n; y++)
-            for (auto x = 0; x < n; x++)
-                stat[tiles[{y, x}]]++;
-        stats[stat]++;
-    }
-    for (const auto& [stat, count] : stats) {
-        cout << "[";
-        for (const auto& s : stat)
-            cout << s << ",";
-        cout << "], " << count << endl;
-    }
-}
-
-// 目標となる数の全域木を適当に探してみる
-auto SearchSpanningTree(const int n, const array<int, 16>& stat) {
-    auto sum_stat = 0;
-    for (const auto s : stat)
-        sum_stat += s;
-    assert(n * n == sum_stat);
-    static auto rng = Random(123478654);
-    for (auto trial = 0ll;; trial++) {
-        if ((trial & trial - 1) == 0) {
-            cout << "trial " << trial << endl;
-        }
-        auto tiles = Board<int, 10, 10>();
-        auto remaining = stat;
-        auto uf = atcoder::dsu(n * n);
-        for (auto y = 0; y < n; y++) {
-            for (auto x = 0; x < n; x++) {
-                auto tile = 0;
-                // 左 (1) と上 (2) は既に確定している
-                if (x != 0 && tiles[{y, x - 1}] & kR) {
-                    tile |= kL;
-                }
-                if (y != 0 && tiles[{y - 1, x}] & kD) {
-                    tile |= kU;
-                }
-                if (tile & kU)
-                    uf.merge(y * n + x, (y - 1) * n + x);
-                if (tile & kL)
-                    uf.merge(y * n + x, y * n + x - 1);
-                // 候補は右と下の選び方 4 通り
-                // ただし、右上のタイルが下を選んでおり、かつ既に自身と右上が同じ集合にいる場合、
-                // 閉路ができるので右は選べない
-                auto candidates = vector<int>();
-                auto candidate_remaining_counts = vector<int>();
-                for (const auto r : {0, kR}) {
-                    if (x == n - 1 && r)
-                        continue;
-                    for (const auto d : {0, kD}) {
-                        if (y == n - 1 && d)
-                            continue;
-                        if (r && x != n - 1 && y != 0 &&
-                            tiles[{y - 1, x + 1}] & kD &&
-                            uf.same(y * n + x, (y - 1) * n + x + 1))
-                            continue;
-                        const auto t = tile | r | d;
-                        const auto p = remaining[t];
-                        if (p) {
-                            candidates.push_back(t);
-                            candidate_remaining_counts.push_back(p);
-                        }
-                    }
-                }
-                if (candidates.size() == 0)
-                    goto retry;
-                tile = candidates[rng.choice(candidate_remaining_counts)];
-                tiles[{y, x}] = tile;
-                remaining[tile]--;
-            }
-        }
-        return tiles;
-    retry:;
-    }
-}
-
-auto FlowSearch(const int n, const array<int, 16>& stat) {
-    auto sum_stat = 0;
-    for (const auto s : stat)
-        sum_stat += s;
-    assert(n * n == sum_stat);
-    static auto rng = Random(123478654);
-    const auto check_flow = [n](const auto& tiles, const auto& remaining,
-                                const auto current_y, const auto current_x) {
-        // if (current_y == n - 1)
-        //     cout << "last line!!" << current_x << endl;
-        if (current_y == n - 1 && current_x == n - 1)
-            return true;
-        auto mf = atcoder::mf_graph<int>(2 + 16 + (n - 1) * 4);
-        constexpr auto kSource = 0;
-        constexpr auto kSink = 1;
-        constexpr auto kTileTypeOffset = 2;
-        constexpr auto kPositionOffset = 18;
-        auto positions = vector<Point>();
-        auto idx_positions = 0;
-        auto added = set<Point>();
-        // 右上
-        if (current_x == n - 1) {
-            // 何もしない
-        } else if (current_x == n - 2) {
-            const auto y = current_y;
-            const auto x = current_x + 1;
-            if (current_y == n - 1) {
-                const auto tile = (tiles[{y - 1, x}] & kD ? kU : 0) |
-                                  (tiles[{y, x - 1}] & kR ? kL : 0);
-                assert(remaining[tile] <= 1);
-                return remaining[tile] == 1;
-            }
-            for (const auto d : {0, kD})
-                mf.add_edge(kPositionOffset + idx_positions,
-                            kTileTypeOffset +
-                                (d | (tiles[{y - 1, x}] & kD ? kU : 0) |
-                                 (tiles[{y, x - 1}] & kR ? kL : 0)),
-                            1);
-            added.insert({y, x});
-            positions.push_back({y, x});
-            idx_positions++;
-        } else {
-            const auto y = current_y;
-            {
-                const auto x = current_x + 1;
-                if (y == n - 1) {
-                    for (const auto r : {0, kR})
-                        mf.add_edge(kPositionOffset + idx_positions,
-                                    kTileTypeOffset +
-                                        (r | (tiles[{y - 1, x}] & kD ? kU : 0) |
-                                         (tiles[{y, x - 1}] & kR ? kL : 0)),
-                                    1);
-                } else {
-                    for (const auto r : {0, kR})
-                        for (const auto d : {0, kD})
-                            mf.add_edge(kPositionOffset + idx_positions,
-                                        kTileTypeOffset +
-                                            (r | d |
-                                             (tiles[{y - 1, x}] & kD ? kU : 0) |
-                                             (tiles[{y, x - 1}] & kR ? kL : 0)),
-                                        1);
-                }
-                added.insert({y, x});
-                positions.push_back({y, x});
-                idx_positions++;
-            }
-            {
-                const auto x = n - 1;
-                if (y == n - 1) {
-                    for (const auto l : {0, kL})
-                        mf.add_edge(kPositionOffset + idx_positions,
-                                    kTileTypeOffset +
-                                        (l | (tiles[{y - 1, x}] & kD ? kU : 0)),
-                                    1);
-                } else {
-                    for (const auto l : {0, kL})
-                        for (const auto d : {0, kD})
-                            mf.add_edge(
-                                kPositionOffset + idx_positions,
-                                kTileTypeOffset +
-                                    (l | d | (tiles[{y - 1, x}] & kD ? kU : 0)),
-                                1);
-                }
-                added.insert({y, x});
-                positions.push_back({y, x});
-                idx_positions++;
-            }
-            for (auto x = current_x + 2; x < n - 1; x++) {
-                if (y < n - 1) {
-                    for (const auto r : {0, kR})
-                        for (const auto l : {0, kL})
-                            for (const auto d : {0, kD})
-                                mf.add_edge(
-                                    kPositionOffset + idx_positions,
-                                    kTileTypeOffset +
-                                        (l | r | d |
-                                         (tiles[{y - 1, x}] & kD ? kU : 0)),
-                                    1);
-                } else if (y == n - 1) {
-                    for (const auto r : {0, kR})
-                        for (const auto l : {0, kL})
-                            mf.add_edge(
-                                kPositionOffset + idx_positions,
-                                kTileTypeOffset +
-                                    (l | r | (tiles[{y - 1, x}] & kD ? kU : 0)),
-                                1);
-                }
-                added.insert({y, x});
-                positions.push_back({y, x});
-                idx_positions++;
-            }
-        }
-        // 左上
-        for (auto x = 0; x <= current_x; x++) {
-            const auto y = current_y + 1;
-            if (y < n - 1) {
-                if (x == 0) {
-                    for (const auto r : {0, kR})
-                        for (const auto d : {0, kD})
-                            mf.add_edge(
-                                kPositionOffset + idx_positions,
-                                kTileTypeOffset +
-                                    (r | d | (tiles[{y - 1, x}] & kD ? kU : 0)),
-                                1);
-                } else if (x == n - 1) {
-                    for (const auto l : {0, kL})
-                        for (const auto d : {0, kD})
-                            mf.add_edge(
-                                kPositionOffset + idx_positions,
-                                kTileTypeOffset +
-                                    (l | d | (tiles[{y - 1, x}] & kD ? kU : 0)),
-                                1);
-                } else {
-                    for (const auto r : {0, kR})
-                        for (const auto l : {0, kL})
-                            for (const auto d : {0, kD})
-                                mf.add_edge(
-                                    kPositionOffset + idx_positions,
-                                    kTileTypeOffset +
-                                        (l | r | d |
-                                         (tiles[{y - 1, x}] & kD ? kU : 0)),
-                                    1);
-                }
-                added.insert({y, x});
-                positions.push_back({y, x});
-                idx_positions++;
-            } else if (y == n - 1) {
-                if (x == 0) {
-                    for (const auto r : {0, kR})
-                        mf.add_edge(kPositionOffset + idx_positions,
-                                    kTileTypeOffset +
-                                        (r | (tiles[{y - 1, x}] & kD ? kU : 0)),
-                                    1);
-                } else if (x == n - 1) {
-                    for (const auto l : {0, kL})
-                        mf.add_edge(kPositionOffset + idx_positions,
-                                    kTileTypeOffset +
-                                        (l | (tiles[{y - 1, x}] & kD ? kU : 0)),
-                                    1);
-                } else {
-                    for (const auto r : {0, kR})
-                        for (const auto l : {0, kL})
-                            mf.add_edge(
-                                kPositionOffset + idx_positions,
-                                kTileTypeOffset +
-                                    (l | r | (tiles[{y - 1, x}] & kD ? kU : 0)),
-                                1);
-                }
-                added.insert({y, x});
-                positions.push_back({y, x});
-                idx_positions++;
-            }
-        }
-        // 左
-        for (auto y = current_y + 2; y < n - 1; y++) {
-            const auto x = 0;
-            for (const auto u : {0, kU})
-                for (const auto d : {0, kD})
-                    for (const auto r : {0, kR})
-                        mf.add_edge(kPositionOffset + idx_positions,
-                                    kTileTypeOffset + (u | d | r), 1);
-
-            added.insert({y, x});
-            positions.push_back({y, x});
-            idx_positions++;
-        }
-        // 右
-        for (auto y = current_x == n - 1 ? current_y + 2 : current_y + 1;
-             y < n - 1; y++) {
-            const auto x = n - 1;
-            for (const auto u : {0, kU})
-                for (const auto d : {0, kD})
-                    for (const auto l : {0, kL})
-                        mf.add_edge(kPositionOffset + idx_positions,
-                                    kTileTypeOffset + (u | d | l), 1);
-
-            added.insert({y, x});
-            positions.push_back({y, x});
-            idx_positions++;
-        }
-        // 下
-        if (current_y == n - 1) {
-            // 何もしない
-        } else if (current_y == n - 2) {
-            const auto y = n - 1;
-            if (current_x != n - 1) {
-                const auto x = n - 1;
-                for (const auto u : {0, kU})
-                    for (const auto l : {0, kL})
-                        mf.add_edge(kPositionOffset + idx_positions,
-                                    kTileTypeOffset + (u | l), 1);
-
-                added.insert({y, x});
-                positions.push_back({y, x});
-                idx_positions++;
-            }
-            for (auto x = current_x + 1; x < n - 1; x++) {
-                for (const auto u : {0, kU})
-                    for (const auto l : {0, kL})
-                        for (const auto r : {0, kL})
-                            mf.add_edge(kPositionOffset + idx_positions,
-                                        kTileTypeOffset + (u | l | r), 1);
-
-                added.insert({y, x});
-                positions.push_back({y, x});
-                idx_positions++;
-            }
-        } else {
-            const auto y = n - 1;
-            {
-                const auto x = 0;
-                for (const auto u : {0, kU})
-                    for (const auto r : {0, kR})
-                        mf.add_edge(kPositionOffset + idx_positions,
-                                    kTileTypeOffset + (u | r), 1);
-
-                added.insert({y, x});
-                positions.push_back({y, x});
-                idx_positions++;
-            }
-            {
-                const auto x = n - 1;
-                for (const auto u : {0, kU})
-                    for (const auto l : {0, kL})
-                        mf.add_edge(kPositionOffset + idx_positions,
-                                    kTileTypeOffset + (u | l), 1);
-
-                added.insert({y, x});
-                positions.push_back({y, x});
-                idx_positions++;
-            }
-            for (auto x = 1; x < n - 1; x++) {
-                for (const auto u : {0, kU})
-                    for (const auto l : {0, kL})
-                        for (const auto r : {0, kL})
-                            mf.add_edge(kPositionOffset + idx_positions,
-                                        kTileTypeOffset + (u | l | r), 1);
-
-                added.insert({y, x});
-                positions.push_back({y, x});
-                idx_positions++;
-            }
-        }
-
-        {
-            // cout << "current_y,x=" << current_y << current_x << endl;
-            // cout << "added:     ";
-            // for (const auto& p : added)
-            //     cout << "(" << p.y << p.x << ")";
-            // cout << endl;
-            // cout << "positions: ";
-            // // sort(positions.begin(), positions.end());
-            // for (const auto& p : positions)
-            //     cout << "(" << p.y << p.x << ")";
-            // cout << endl;
-        }
-        assert(positions.size() == added.size());
-
-        for (auto i = 0; i < (int)positions.size(); i++) {
-            mf.add_edge(kSource, kPositionOffset + i, 1);
-        }
-        for (auto i = 0; i < 16; i++) {
-            mf.add_edge(kTileTypeOffset + i, kSink, remaining[i]);
-        }
-
-        return mf.flow(kSource, kSink) == (int)positions.size();
-    };
-    for (auto trial = 0ll;; trial++) {
-        if ((trial & trial - 1) == 0) {
-            cout << "trial " << trial << endl;
-        }
-        auto tiles = Board<int, 10, 10>();
-        auto remaining = stat;
-        auto uf = atcoder::dsu(n * n);
-        for (auto y = 0; y < n; y++) {
-            for (auto x = 0; x < n; x++) {
-                auto tile = 0;
-                // 左 (1) と上 (2) は既に確定している
-                if (x != 0 && tiles[{y, x - 1}] & kR) {
-                    tile |= kL;
-                }
-                if (y != 0 && tiles[{y - 1, x}] & kD) {
-                    tile |= kU;
-                }
-                if (tile & kU)
-                    uf.merge(y * n + x, (y - 1) * n + x);
-                if (tile & kL)
-                    uf.merge(y * n + x, y * n + x - 1);
-                // 候補は右と下の選び方 4 通り
-                // ただし、右上のタイルが下を選んでおり、かつ既に自身と右上が同じ集合にいる場合、
-                // 閉路ができるので右は選べない
-                auto candidates = vector<int>();
-                auto candidate_remaining_counts = vector<int>();
-                for (const auto r : {0, kR}) {
-                    if (x == n - 1 && r)
-                        continue;
-                    for (const auto d : {0, kD}) {
-                        if (y == n - 1 && d)
-                            continue;
-                        if (r && x != n - 1 && y != 0 &&
-                            tiles[{y - 1, x + 1}] & kD &&
-                            uf.same(y * n + x, (y - 1) * n + x + 1))
-                            continue;
-                        const auto t = tile | r | d;
-                        const auto p = remaining[t];
-                        if (p) {
-                            candidates.push_back(t);
-                            candidate_remaining_counts.push_back(p);
-                        }
-                    }
-                }
-                do {
-                    if (candidates.size() == 0)
-                        goto retry;
-                    const auto choice_index =
-                        rng.choice(candidate_remaining_counts);
-                    tile = candidates[choice_index];
-                    tiles[{y, x}] = tile;
-                    remaining[tile]--;
-                    if (y < n - 4)
-                        break;
-                    if (check_flow(tiles, remaining, y, x))
-                        break;
-                    remaining[tile]++;
-                    swap(candidates[choice_index],
-                         candidates[candidates.size() - 1]);
-                    swap(candidate_remaining_counts[choice_index],
-                         candidate_remaining_counts
-                             [candidate_remaining_counts.size() - 1]);
-                    candidates.pop_back();
-                    candidate_remaining_counts.pop_back();
-                } while (1);
-            }
-        }
-        return tiles;
-    retry:;
-    }
-}
-
-auto SwapSearch(const int n, const Board<int, 10, 10>& initial_tiles) {
-    auto tiles = initial_tiles;
-    static auto rng = Random(123478654);
-
-    for (auto trial = 0ll;; trial++) {
-        if ((trial & trial - 1) == 0) {
-            cout << "trial " << trial << endl;
-            tiles.Print();
-            for (auto y = 0; y < n; y++) {
-                for (auto x = 0; x < n; x++) {
-                    cout << kBoxDrawings[tiles[{y, x}]];
-                }
-                cout << endl;
-            }
-        }
-        auto p1 = Point{rng.randint(n), rng.randint(n)};
-        if (((tiles[p1] & kR) > 0) ==
-                (p1.x == n - 1 ? false
-                               : ((tiles[{p1.y, p1.x + 1}] & kL) > 0)) &&
-            ((tiles[p1] & kL) > 0) ==
-                (p1.x == 0 ? false : ((tiles[{p1.y, p1.x - 1}] & kR) > 0)) &&
-            ((tiles[p1] & kD) > 0) ==
-                (p1.y == n - 1 ? false
-                               : ((tiles[{p1.y + 1, p1.x}] & kU) > 0)) &&
-            ((tiles[p1] & kU) > 0) ==
-                (p1.y == 0 ? false : ((tiles[{p1.y - 1, p1.x}] & kD) > 0))) {
-            continue;
-        }
-        auto p2 = Point{rng.randint(n), rng.randint(n)};
-        if (((tiles[p2] & kR) > 0) ==
-                (p2.x == n - 1 ? false
-                               : ((tiles[{p2.y, p2.x + 1}] & kL) > 0)) &&
-            ((tiles[p2] & kL) > 0) ==
-                (p2.x == 0 ? false : ((tiles[{p2.y, p2.x - 1}] & kR) > 0)) &&
-            ((tiles[p2] & kD) > 0) ==
-                (p2.y == n - 1 ? false
-                               : ((tiles[{p2.y + 1, p2.x}] & kU) > 0)) &&
-            ((tiles[p2] & kU) > 0) ==
-                (p2.y == 0 ? false : ((tiles[{p2.y - 1, p2.x}] & kD) > 0))) {
-            continue;
-        }
-        swap(tiles[p1], tiles[p2]);
-
-        // チェック
-
-        for (auto y = 0; y < n; y++)
-            for (auto x = 0; x < n; x++) {
-                if (x != n - 1) {
-                    if (((tiles[{y, x}] & kR) > 0) !=
-                        ((tiles[{y, x + 1}] & kL) > 0))
-                        goto next_trial;
-                }
-                if (y != n - 1) {
-                    if (((tiles[{y, x}] & kD) > 0) !=
-                        ((tiles[{y + 1, x}] & kU) > 0))
-                        goto next_trial;
-                }
-            }
-        return tiles;
-        // 連結性確認してなかった
-    next_trial:;
-    }
-}
-
 void PrintTiles(const int n, const Board<int, 10, 10>& b) {
     b.Print();
     for (auto y = 0; y < n; y++) {
@@ -1185,7 +678,7 @@ void PrintTiles(const int n, const Board<int, 10, 10>& b) {
 }
 
 // どこかの辺を切って、どこかの辺を足す
-auto ConsistSpanningTreeSearch(const int n, const array<int, 16>& target_stat) {
+auto RandomTargetTree(const int n, const array<int, 16>& target_stat) {
     struct Edge {
         Point from, to;
     };
@@ -1198,19 +691,19 @@ auto ConsistSpanningTreeSearch(const int n, const array<int, 16>& target_stat) {
         }
     }
     for (auto trial = 0ll;; trial++) {
-        if (trial % 1024 == 1) {
+        if (trial % 1024 == 0) { // パラメータ
             tiles = RandomSpaningTree(n);
             stat = ComputeStat(n, tiles);
         }
         if ((trial & trial - 1) == 0) {
-            cout << "trial " << trial << endl;
-            PrintTiles(n, tiles);
-            for (auto c : stat)
-                cout << c << " ";
-            cout << endl;
-            for (auto c : target_stat)
-                cout << c << " ";
-            cout << endl;
+            // cout << "trial " << trial << endl;
+            // PrintTiles(n, tiles);
+            // for (auto c : stat)
+            //     cout << c << " ";
+            // cout << endl;
+            // for (auto c : target_stat)
+            //     cout << c << " ";
+            // cout << endl;
         }
 
         {
@@ -1271,20 +764,9 @@ auto ConsistSpanningTreeSearch(const int n, const array<int, 16>& target_stat) {
                     }
                 }
             }
-            // if ((trial & trial - 1) == 0) {
-            //     cout << "best_edges.size() " << best_edges.size() << endl;
-            // }
             if (best_edges.size() == 0) {
                 return tiles;
             }
-
-            // {
-            //     // sanity check
-            //     auto s = ComputeStat(n, tiles);
-            //     if (s != stat) {
-            //         assert(false);
-            //     }
-            // }
 
             const auto rnd = rng.randint((int)best_edges.size());
             const auto edge = best_edges[rnd];
@@ -1307,27 +789,9 @@ auto ConsistSpanningTreeSearch(const int n, const array<int, 16>& target_stat) {
                 stat[tile_u]++;
                 stat[tile_d]++;
             }
-            // {
-            //     // sanity check
-            //     auto s = ComputeStat(n, tiles);
-            //     if (s != stat) {
-            //         assert(false);
-            //     }
-            // }
         }
         {
             // 足す
-
-            // 0 を特別扱いすべきなのか微妙
-            // if(stat[0] >= 2){
-            //     assert(stat[0] == 2);
-            //     for(auto y=0; y<n; y++){
-            //         for(auto x=0; x<n; x++){
-
-            //         }
-            //     }
-            // }
-
             // DFS
             auto region = Board<int, 10, 10>();
             auto region_cnt = 1;
@@ -1481,30 +945,12 @@ auto TestSearchSpanningTree() {
     auto input = Input();
     input.Read();
 
-    {
-        // const auto t0 = Time();
-        // const auto b = SearchSpanningTree(input.N, input.stat);
-        // const auto t1 = Time() - t0;
-        // PrintTiles(input.N, b);
-        // cout << "t1=" << t1 << endl;
-    }
-
-    {
-        // const auto t0 = Time();
-        // const auto b = FlowSearch(input.N, input.stat);
-        // const auto t1 = Time() - t0;
-        // PrintTiles(input.N, b);
-        // cout << "t1=" << t1 << endl;
-    } {
-        const auto t0 = Time();
-        const auto b = ConsistSpanningTreeSearch(input.N, input.stat);
-        const auto t1 = Time() - t0;
-        PrintTiles(input.N, b);
-        cout << "t1=" << t1 << endl;
-    }
+    const auto t0 = Time();
+    const auto b = RandomTargetTree(input.N, input.stat);
+    const auto t1 = Time() - t0;
+    PrintTiles(input.N, b);
+    cout << "t1=" << t1 << endl;
+    assert(ComputeStat(input.N, b) == input.stat);
 }
 
-int main() {
-    // TileCountStats();
-    TestSearchSpanningTree();
-}
+int main() { TestSearchSpanningTree(); }
