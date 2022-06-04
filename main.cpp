@@ -99,23 +99,28 @@ template <class T, class S> inline bool chmax(T& m, const S q) {
 // 乱数
 struct Random {
     using ull = unsigned long long;
-    unsigned seed;
+    // unsigned seed;
+    ull seed;
     inline Random(const unsigned& seed_) : seed(seed_) { assert(seed != 0u); }
-    const inline unsigned& next() {
-        seed ^= seed << 13;
-        seed ^= seed >> 17;
-        seed ^= seed << 5;
+    const inline ull& next() {
+        // seed ^= seed << 13;
+        // seed ^= seed >> 17;
+        // seed ^= seed << 5;
+        seed ^= seed << 7;
+        seed ^= seed >> 9;
         return seed;
     }
     // (0.0, 1.0)
     inline double random() {
-        return (double)next() * (1.0 / (double)0x100000000ull);
+        return (double)(unsigned)next() * (1.0 / (double)0x100000000ull);
     }
     // [0, right)
-    inline int randint(const int& right) { return (ull)next() * right >> 32; }
+    inline int randint(const int& right) {
+        return (ull)(unsigned)next() * right >> 32;
+    }
     // [left, right)
     inline int randint(const int& left, const int& right) {
-        return ((ull)next() * (right - left) >> 32) + left;
+        return ((ull)(unsigned)next() * (right - left) >> 32) + left;
     }
     template <class Container> inline auto choice(const Container& weight) {
         using T = typename Container::value_type;
@@ -1179,7 +1184,7 @@ abort();
 
 using Point = Vec2<int>;
 using Tiles = Board<signed char, 10, 10>;
-using HashType = unsigned;
+using HashType = unsigned long long;
 constexpr auto kL = 1;
 constexpr auto kU = 2;
 constexpr auto kR = 4;
@@ -1693,9 +1698,19 @@ auto ComputeH(const array<unsigned char, 100>& positions, const int tile_type,
     if (problem.target_box_stat[tile_type] == 0)
         return 0;
     const auto coef = [&](const auto target_y, const auto target_x) {
-        auto tmp =
-            abs(target_x - problem.W / 2) + abs(target_y - problem.H / 2) + 1;
-        return 1; // tmp* tmp;
+        // auto tmp =
+        //     abs(target_x - problem.W / 2) + abs(target_y - problem.H / 2) +
+        //     1;
+
+        const auto center = problem.target_box_positions[0];
+
+        // auto tmp = abs(target_y - (center >> 4)) +
+        //            abs(target_x - (center & 0b1111)) + 1;
+
+        // auto tmp = max(abs(target_y - (center >> 4)),
+        //                abs(target_x - (center & 0b1111)));
+
+        return 1; //(int)(tmp * tmp);
     };
     for (auto i = 0; i < problem.stat[tile_type]; i++) {
         const auto yx = positions[problem.tile_type_separations[tile_type] + i];
@@ -1777,7 +1792,7 @@ struct PartialState {
     }
 
     inline auto H2(const PartialProblem& problem) const {
-
+        return 0;
         auto scores = Board<bool, 10, 10>();
         for (auto y = 0; y < problem.H; y++) {
             for (auto x = 0; x < problem.W; x++) {
@@ -1947,9 +1962,7 @@ static auto SolvePartial(const PartialProblem problem) {
     state_buffer.push(initial_state);
     searched.insert(initial_state.hash);
 
-    constexpr auto kBeamWidth = 5000;
-    auto beam_count = 0;
-    auto current_f = 0;
+    constexpr auto kBeamWidth = 3000;
     static auto next_state_actions =
         Stack<PartialStateAction, kBeamWidth * 4>();
     next_state_actions.clear();
@@ -1962,13 +1975,11 @@ static auto SolvePartial(const PartialProblem problem) {
         auto p_char = initial_state.positions[0];
         const auto v = Point{p_char >> 4, p_char & 0b1111};
         const auto u = v + d;
-        cout << u << endl;
         if (!(0 <= u.x && u.x < problem.W && 0 <= u.y && u.y < problem.H)) {
             cout << (0 <= u.x) << (u.x < problem.W) << (0 <= u.y)
                  << (u.y < problem.H) << endl;
             continue;
         }
-        cout << "ok" << endl;
         action.parent = 0;
         action.to = (unsigned char)(u.y << 4 | u.x);
         const auto tile_type = initial_state.tiles[u];
@@ -1985,8 +1996,6 @@ static auto SolvePartial(const PartialProblem problem) {
         searched.insert(action.hash);
     }
 
-    cout << "next_state_actions.size()" << next_state_actions.size() << endl;
-
     for (auto step = 0;; step++) {
         if (next_state_actions.size() == 0) {
             cout << "見つからなかった！！！！！" << endl;
@@ -1998,13 +2007,15 @@ static auto SolvePartial(const PartialProblem problem) {
                 next_state_actions.begin() + kBeamWidth,
                 next_state_actions.end(),
                 [](const PartialStateAction& l, const PartialStateAction& r) {
-                    return l.HSum() < r.HSum();
+                    return l.HSum() + (int)l.hash % 8 <
+                           r.HSum() + (int)r.hash % 8;
                 });
             next_state_actions.resize(kBeamWidth);
         }
 
         if (step % 10 == 0) {
-            const auto& state = next_state_actions[0];
+            const auto& state =
+                next_state_actions[rng.randint(next_state_actions.size())];
             cout << "step " << step << endl;
             state.ToState(problem).Print(problem.H, problem.W);
         }
@@ -2016,13 +2027,18 @@ static auto SolvePartial(const PartialProblem problem) {
             state_buffer.push(state_action.ToState(problem));
             auto& state = state_buffer.back();
             if (state.h == 0)
-                return PartialProblemResult{state.Path(), state.tiles};
+                return state.Print(problem.H, problem.W),
+                       PartialProblemResult{state.Path(), state.tiles};
 
             for (const auto& d : {Point{0, 1}, {1, 0}, {0, -1}, {-1, 0}}) {
                 auto action = PartialStateAction();
                 const auto p_char = state.positions[0];
                 const auto v = Point{p_char >> 4, p_char & 0b1111};
                 const auto u = v + d;
+                if (state.parent != 1 &&
+                    state_buffer[state.parent].positions[0] ==
+                        (unsigned char)(u.y << 4 | u.x))
+                    continue;
                 if (!(0 <= u.x && u.x < problem.W && 0 <= u.y &&
                       u.y < problem.H))
                     continue;
@@ -2107,7 +2123,7 @@ void TestSolvePartial2() {
 
     auto left_has_0 = false;
     for (auto y = 0; y < input.N; y++)
-        if (input.tiles[{y, 0}] == 0)
+        if (best_tiles[{y, 0}] == 0)
             left_has_0 = true;
 
     const auto l = left_has_0 ? input.N - 1 : 0;
@@ -2143,7 +2159,7 @@ auto TestTargetPatterns() {
 int main() {
     Initialize();
     // TestSearchSpanningTree();
-    TestSolvePartial();
-    // TestSolvePartial2();
-    //    TestTargetPatterns();
+    // TestSolvePartial();
+    TestSolvePartial2();
+    //  TestTargetPatterns();
 }
