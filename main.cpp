@@ -1,5 +1,7 @@
+#include "robin_hood.h"
 #include <atcoder/all>
 #include <atcoder/maxflow.hpp>
+#include <iterator>
 
 #ifdef _MSC_VER
 #define _CRT_SECURE_NO_WARNINGS
@@ -1574,6 +1576,7 @@ struct PartialProblem {
     array<signed char, 17>
         target_box_tile_type_separations; // target_box_stat の累積和
 
+    PartialProblem() = default;
     inline PartialProblem(const int a_H, const int a_W, const Tiles& a_tiles,
                           const Tiles& a_target_tiles, const int u, const int d,
                           const int l, const int r)
@@ -1716,7 +1719,7 @@ struct PartialState {
         positions; // タイルの種類ごとの場所 y/x 4 ビットずつ
     int parent;
     static unsigned char temporal_move;
-    static Stack<PartialState, 2000000> buffer;
+    static Stack<PartialState, 3000000> buffer;
 
     // 初期状態生成
     static PartialState InitialState(const PartialProblem& problem) {
@@ -1805,7 +1808,7 @@ struct PartialState {
     }
 };
 unsigned char PartialState::temporal_move;
-auto PartialState::buffer = Stack<PartialState, 2000000>(); // 500 MB
+auto PartialState::buffer = Stack<PartialState, 3000000>(); // 500 MB
 auto& state_buffer = PartialState::buffer;
 constexpr auto sz_mb = sizeof(state_buffer) / 1024 / 1024;
 
@@ -1858,18 +1861,23 @@ struct PartialStateAction {
     }
 };
 
-// A* 探索
+// ビームサーチ
 static auto SolvePartial(const PartialProblem problem) {
     state_buffer.clear();
 
-    // 距離、キュー
-    auto distances = robin_hood::unordered_map<HashType, short>(); // 距離が確定
-    auto q = radix_heap::pair_radix_heap<short, PartialStateAction>(); //
+    auto searched = robin_hood::unordered_set<HashType>();
 
     // 初期状態
     auto initial_state = PartialState::InitialState(problem);
     state_buffer.push(initial_state);
-    distances[initial_state.hash] = initial_state.h;
+    searched.insert(initial_state.hash);
+
+    constexpr auto kBeamWidth = 10000;
+    auto beam_count = 0;
+    auto current_f = 0;
+    static auto next_state_actions =
+        Stack<PartialStateAction, kBeamWidth * 4>();
+    next_state_actions.clear();
 
     // 初期状態からの遷移をキューに入れる
     for (const auto d : {Point{0, 1}, {1, 0}, {0, -1}, {-1, 0}}) {
@@ -1891,68 +1899,61 @@ static auto SolvePartial(const PartialProblem problem) {
         action.changed_h =
             ComputeH(initial_state.positions, tile_type, problem);
         initial_state.MoveBack();
-        q.push(action.F(), action);
-        distances[action.hash] = action.F();
+        next_state_actions.push(action);
+        searched.insert(action.hash);
     }
 
-    // 探索
-    for (auto iteration = 0ll;; iteration++) {
-        const auto fv = q.top_key();
-        const auto old_action = q.top_value();
-        q.pop();
-        if (distances[old_action.hash] != fv)
-            continue;
-
-        const auto idx_state = state_buffer.size();
-        state_buffer.push(old_action.ToState(problem));
-        auto& state = state_buffer.back();
-
-        if (state.h == 0) {
-            // 目標発見
-            return PartialProblemResult{state.Path(), state.tiles};
+    for (auto step = 0;; step++) {
+        if (next_state_actions.size() == 0) {
+            cout << "見つからなかった！！！！！" << endl;
+            assert(false);
+        }
+        if (next_state_actions.size() > kBeamWidth) {
+            nth_element(
+                next_state_actions.begin(),
+                next_state_actions.begin() + kBeamWidth,
+                next_state_actions.end(),
+                [](const PartialStateAction& l, const PartialStateAction& r) {
+                    return l.H() < r.H();
+                });
+            next_state_actions.resize(kBeamWidth);
         }
 
-        if ((iteration & iteration - 1) == 0) {
-            // cout << "iteration " << iteration << endl;
-            // state.Print(problem.H, problem.W);
+        if (step % 10 == 0) {
+            // const auto& state = next_state_actions[0];
+            // cout << "step " << step << endl;
+            // state.ToState(problem).Print(problem.H, problem.W);
         }
 
-        for (const auto& d : {Point{0, 1}, {1, 0}, {0, -1}, {-1, 0}}) {
-            auto action = PartialStateAction();
-            auto p_char = state.positions[0];
-            const auto v = Point{p_char >> 4, p_char & 0b1111};
-            const auto u = v + d;
-            if (!(0 <= u.x && u.x < problem.W && 0 <= u.y && u.y < problem.H))
-                continue;
-            action.parent = idx_state;
-            action.to = (unsigned char)(u.y << 4 | u.x);
-            const auto tile_type = state.tiles[u];
-            action.hash = state.hash ^ zobrist_table[v.y][v.x][tile_type] ^
-                          zobrist_table[u.y][u.x][tile_type];
-            auto distance_it = distances.find(action.hash);
-            const auto found = distance_it != distances.end();
-            if (found && distance_it->second <= state.f)
-                continue;
-            state.MoveTemporarily(u, problem.tile_type_separations);
-            action.changed_h = ComputeH(state.positions, tile_type, problem);
-            state.MoveBack();
-            const auto f = action.F();
-            if (state.f > f) {
-                // デバッグ
-                cout << "やば！！！" << endl;
-                state.Print(problem.H, problem.W);
-                action.ToState(problem).Print(problem.H, problem.W);
+        for (const auto& state_action : next_state_actions) {
+            const auto idx_state = state_buffer.size();
+            state_buffer.push(state_action.ToState(problem));
+            auto& state = state_buffer.back();
+            if (state.h == 0)
+                return PartialProblemResult{state.Path(), state.tiles};
+
+            for (const auto& d : {Point{0, 1}, {1, 0}, {0, -1}, {-1, 0}}) {
+                auto action = PartialStateAction();
+                const auto p_char = state.positions[0];
+                const auto v = Point{p_char >> 4, p_char & 0b1111};
+                const auto u = v + d;
+                if (!(0 <= u.x && u.x < problem.W && 0 <= u.y &&
+                      u.y < problem.H))
+                    continue;
+                action.parent = idx_state;
+                action.to = (unsigned char)(u.y << 4 | u.x);
+                const auto tile_type = state.tiles[u];
+                action.hash = state.hash ^ zobrist_table[v.y][v.x][tile_type] ^
+                              zobrist_table[u.y][u.x][tile_type];
+                if (searched.contains(action.hash))
+                    continue;
+                searched.insert(action.hash);
+                state.MoveTemporarily(u, problem.tile_type_separations);
+                action.changed_h =
+                    ComputeH(state.positions, tile_type, problem);
+                state.MoveBack();
+                next_state_actions.push(action);
             }
-            assert(state.f <= f);
-            if (found && distance_it->second <= f)
-                continue;
-            if (found) {
-                distance_it->second = f;
-            } else {
-                distances[action.hash] = f;
-            }
-            q.push(f, action);
-            distances[action.hash] = f;
         }
     }
 }
@@ -1978,12 +1979,23 @@ auto input = Input();
 
 void TestSolvePartial() {
     // 問題を設定
-    const auto input_stat = ComputeStat(input.N, input.N, input.tiles);
-    const auto target_tiles = RandomTargetTree(input.N, input_stat);
+    auto best = 1000;
+    auto best_problem = PartialProblem();
+    for (int i = 0; i < 200; i++) {
+        const auto input_stat = ComputeStat(input.N, input.N, input.tiles);
+        const auto target_tiles = RandomTargetTree(input.N, input_stat);
 
-    const auto problem = PartialProblem(input.N, input.N, input.tiles,
-                                        target_tiles, 0, input.N, 0, input.N);
-    const auto result = SolvePartial(problem);
+        const auto problem =
+            PartialProblem(input.N, input.N, input.tiles, target_tiles, 0,
+                           input.N, 0, input.N);
+        const auto h = PartialState::InitialState(problem).h;
+        cout << "h=" << h << endl;
+        if (chmin(best, h)) {
+            best_problem = problem;
+        }
+    }
+
+    const auto result = SolvePartial(best_problem);
 
     result.Print();
 }
@@ -2030,7 +2042,7 @@ auto TestTargetPatterns() {
 int main() {
     Initialize();
     // TestSearchSpanningTree();
-    // TestSolvePartial();
-    TestSolvePartial2();
-    // TestTargetPatterns();
+    TestSolvePartial();
+    // TestSolvePartial2();
+    //   TestTargetPatterns();
 }
