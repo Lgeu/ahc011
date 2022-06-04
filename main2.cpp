@@ -1171,54 +1171,36 @@ abort();
 
 // =========================== ここまでライブラリ ===========================
 
-struct Input {
-    int N, T;
-    Board<signed char, 10, 10> tiles;
-    array<int, 16> stat;
-    array<signed char, 17> tile_type_separations;
-
-    void Read() {
-        cin >> N >> T;
-        string tmp;
-        fill(stat.begin(), stat.end(), 0);
-        for (auto y = 0; y < N; y++) {
-            cin >> tmp;
-            for (auto x = 0; x < N; x++) {
-                tiles[{y, x}] =
-                    tmp[x] <= '9' ? tmp[x] - '0' : tmp[x] - 'a' + 10;
-                stat[tiles[{y, x}]]++;
-            }
-        }
-        auto cum_stat = 0;
-        tile_type_separations[0] = 0;
-        for (auto i = 0; i < 16; i++) {
-            cum_stat += stat[i];
-            tile_type_separations[i + 1] = cum_stat;
-        }
-    }
-};
+// 方針
+// 問題を与えて、部分的に解く関数を作る
 
 using Point = Vec2<int>;
+using Tiles = Board<signed char, 10, 10>;
+using HashType = unsigned;
 constexpr auto kL = 1;
 constexpr auto kU = 2;
 constexpr auto kR = 4;
 constexpr auto kD = 8;
-auto input = Input();
 static auto rng = Random(913418416u);
-
 const auto kBoxDrawings =
     array<string, 16>{" ", "╸", "╹", "┛", "╺", "━", "┗", "┻",
                       "╻", "┓", "┃", "┫", "┏", "┳", "┣", "╋"};
+auto zobrist_table = array<array<array<HashType, 16>, 10>, 10>();
 
-// タイルの個数を数える
-auto ComputeStat(const int n, const Board<signed char, 10, 10>& tiles) {
-    auto stat = array<int, 16>();
-    for (auto y = 0; y < n; y++) {
-        for (auto x = 0; x < n; x++) {
-            stat[tiles[{y, x}]]++;
+// 状態の描画
+void PrintTiles(const int h, const int w, const Tiles& b) {
+    for (auto y = 0; y < h; y++) {
+        for (auto x = 0; x < w; x++) {
+            cout << (int)b[{y, x}] << " ";
         }
+        cout << endl;
     }
-    return stat;
+    for (auto y = 0; y < h; y++) {
+        for (auto x = 0; x < w; x++) {
+            cout << kBoxDrawings[b[{y, x}]];
+        }
+        cout << endl;
+    }
 }
 
 // ランダムに全域木をつくる
@@ -1237,7 +1219,7 @@ auto RandomSpaningTree(const int n) {
         }
     }
     auto uf = atcoder::dsu(n * n);
-    auto tiles = Board<signed char, 10, 10>();
+    auto tiles = Tiles();
     auto n_added_edges = 0;
     for (auto idx_edges = 0; n_added_edges < n * n - 2; idx_edges++) {
         const auto r = rng.randint(idx_edges, (int)edges.size());
@@ -1260,19 +1242,20 @@ auto RandomSpaningTree(const int n) {
     return tiles;
 }
 
-void PrintTiles(const int n, const Board<signed char, 10, 10>& b) {
-    for (auto y = 0; y < n; y++) {
-        for (auto x = 0; x < n; x++) {
-            cout << (int)b[{y, x}] << " ";
+// タイルの個数を数える
+inline auto ComputeStat(const int u, const int d, const int l, const int r,
+                        const Tiles& tiles) {
+    auto stat = array<int, 16>();
+    for (auto y = u; y < d; y++) {
+        for (auto x = l; x < r; x++) {
+            stat[tiles[{y, x}]]++;
         }
-        cout << endl;
     }
-    for (auto y = 0; y < n; y++) {
-        for (auto x = 0; x < n; x++) {
-            cout << kBoxDrawings[b[{y, x}]];
-        }
-        cout << endl;
-    }
+    return stat;
+}
+
+inline auto ComputeStat(const int h, const int w, const Tiles& tiles) {
+    return ComputeStat(0, h, 0, w, tiles);
 }
 
 // どこかの辺を切って、どこかの辺を足す
@@ -1291,19 +1274,8 @@ auto RandomTargetTree(const int n, const array<int, 16>& target_stat) {
     for (auto trial = 0ll;; trial++) {
         if (trial % 1024 == 0) { // パラメータ
             tiles = RandomSpaningTree(n);
-            stat = ComputeStat(n, tiles);
+            stat = ComputeStat(n, n, tiles);
         }
-        if ((trial & trial - 1) == 0) {
-            // cout << "trial " << trial << endl;
-            // PrintTiles(n, tiles);
-            // for (auto c : stat)
-            //     cout << c << " ";
-            // cout << endl;
-            // for (auto c : target_stat)
-            //     cout << c << " ";
-            // cout << endl;
-        }
-
         {
             // 切る
             auto best = 1;
@@ -1391,7 +1363,7 @@ auto RandomTargetTree(const int n, const array<int, 16>& target_stat) {
         {
             // 足す
             // DFS
-            auto region = Board<signed char, 10, 10>();
+            auto region = Tiles();
             auto region_cnt = 1;
             for (auto y = 0; y < n; y++) {
                 for (auto x = 0; x < n; x++) {
@@ -1520,29 +1492,14 @@ auto RandomTargetTree(const int n, const array<int, 16>& target_stat) {
     }
 }
 
-auto NaiveAssignment(const int n, const Board<int, 50, 50>& A) {
-    auto best = numeric_limits<int>::max();
-    static auto permutation = array<int, 10>();
-    iota(permutation.begin(), permutation.end(), 0);
-    do {
-        auto score = 0;
-        for (auto y = 0; y < n; y++) {
-            const auto x = permutation[y];
-            score += A[{y + 1, x + 1}];
-        }
-        chmin(best, score);
-    } while (next_permutation(permutation.begin(), permutation.begin() + n));
-    return best;
-}
-
 // ハンガリアン法
 // 参考: https://ei1333.github.io/luzhiled/snippets/graph/hungarian.html
-auto Hungarian(const int n, const Board<int, 50, 50>& A) {
+auto Hungarian(const int h, const int w, const Board<int, 50, 50>& A) {
     // A は 1-based
     using T = int;
     const T infty = numeric_limits<T>::max();
-    const int H = n + 1;
-    const int W = n + 1;
+    const int H = h + 1;
+    const int W = w + 1;
     static auto P = array<int, 50>();
     fill(P.begin(), P.begin() + W, 0);
     static auto way = array<int, 50>();
@@ -1589,41 +1546,96 @@ auto Hungarian(const int n, const Board<int, 50, 50>& A) {
     return -V[0];
 }
 
-void TestHungarian() {
-    static auto rng = Random(1935831850);
-    auto A = Board<int, 50, 50>();
-    for (auto trial = 0; trial < 10000; trial++) {
-        for (auto&& x : A.data) {
-            x = rng.randint(20);
+auto ComputePositions(const int u, const int d, const int l, const int r,
+                      const Tiles& tiles,
+                      const array<signed char, 17>& tile_type_separations) {
+    auto result = array<unsigned char, 100>();
+    auto indices = tile_type_separations;
+    for (auto y = u; y < d; y++)
+        for (auto x = l; x < r; x++)
+            result[indices[tiles[{y, x}]]++] = (unsigned char)(y << 4 | x);
+    return result;
+}
+
+auto ComputePositions(const int h, const int w, const Tiles& tiles,
+                      const array<signed char, 17>& tile_type_separations) {
+    return ComputePositions(0, h, 0, w, tiles, tile_type_separations);
+}
+
+struct PartialProblem {
+    int H, W;
+    Tiles tiles;                                // 初期状態 H x W
+    Tiles target_tiles;                         // 目標 (H x W 全部)
+    int target_u, target_d, target_l, target_r; // とりあえず揃えたい場所
+    array<int, 16> stat;                        // 各タイルの数
+    array<int, 16> target_stat; // 揃えたい場所の各タイルの数
+    array<unsigned char, 100> target_positions; // 揃えたいタイルの位置たち
+    array<signed char, 17> tile_type_separations;        // stat の累積和
+    array<signed char, 17> target_tile_type_separations; // target_stat の累積和
+    PartialProblem(const int a_H, const int a_W, const Tiles& a_tiles,
+                   const Tiles& a_target_tiles, const int u, const int d,
+                   const int l, const int r)
+        : H(a_H), W(a_W), tiles(a_tiles), target_tiles(a_target_tiles),
+          target_u(u), target_d(d), target_l(l), target_r(r) {
+        stat = ComputeStat(H, W, tiles);
+        assert(stat == ComputeStat(H, W, target_tiles));
+        target_stat = ComputeStat(u, d, l, r, tiles);
+        tile_type_separations[0] = 0;
+        target_tile_type_separations[0] = 0;
+        for (auto i = 0; i < 16; i++) {
+            tile_type_separations[i + 1] = tile_type_separations[i] + stat[i];
+            target_tile_type_separations[i + 1] =
+                target_tile_type_separations[i] + target_stat[i];
         }
-        for (auto i = 1; i <= 9; i++) {
-            auto t0 = Time();
-            auto a1 = NaiveAssignment(i, A);
-            auto t1 = Time();
-            auto a2 = Hungarian(i, A);
-            auto t2 = Time();
-            // cout << "Naive:     " << a1 << " " << t1 - t0 << endl;
-            // cout << "Hungarian: " << a2 << " " << t2 - t1 << endl;
-            assert(a1 == a2);
+        target_positions =
+            ComputePositions(u, d, l, r, tiles, target_tile_type_separations);
+    }
+};
+
+struct PartialProblemResult {
+    // TODO
+
+    void Print() const {
+        // TODO
+    }
+};
+
+auto ComputeHash(const int h, const int w, const Tiles& tiles) {
+    auto result = (HashType)0;
+    for (auto y = 0; y < h; y++)
+        for (auto x = 0; x < w; x++)
+            result ^= zobrist_table[y][x][tiles[{y, x}]];
+    return result;
+}
+
+// ヒューリスティック関数の計算
+auto ComputeH(const array<unsigned char, 100>& positions, const int tile_type,
+              const PartialProblem& problem) {
+    // tiles は使わず positions だけ見る
+    assert(tile_type != 0);
+    static auto cost_matrix = Board<int, 50, 50>();
+    if (problem.target_stat[tile_type] == 0)
+        return 0;
+    for (auto i = 0; i < problem.stat[tile_type]; i++) {
+        const auto yx = positions[problem.tile_type_separations[tile_type] + i];
+        const auto y = yx >> 4;
+        const auto x = yx & 0b1111;
+        for (auto j = 0; j < problem.target_stat[tile_type]; j++) {
+            const auto target_yx =
+                problem.target_positions
+                    [problem.target_tile_type_separations[tile_type] + j];
+            const auto target_y = target_yx >> 4;
+            const auto target_x = target_yx & 0b1111;
+            cost_matrix[{j + 1, i + 1}] = abs(y - target_y) + abs(x - target_x);
         }
     }
+    assert(problem.target_stat[tile_type] <= problem.stat[tile_type]);
+    return Hungarian(problem.target_stat[tile_type], problem.stat[tile_type],
+                     cost_matrix);
 }
 
-auto TestSearchSpanningTree() {
-
-    const auto t0 = Time();
-    const auto b = RandomTargetTree(input.N, input.stat);
-    const auto t1 = Time() - t0;
-    PrintTiles(input.N, b);
-    cout << "t1=" << t1 << endl;
-    assert(ComputeStat(input.N, b) == input.stat);
-}
-
-using HashType = unsigned;
-auto hash_table = array<array<array<HashType, 16>, 10>, 10>();
-
-struct State {
-    Board<signed char, 10, 10> tiles;
+struct PartialState {
+    Tiles tiles;
     HashType hash; // 衝突するとどうなる？？？
     short f;       // g + h
     short g;       // 現在までの距離
@@ -1633,6 +1645,24 @@ struct State {
         positions; // タイルの種類ごとの場所 y/x 4 ビットずつ
     int parent;
     static unsigned char temporal_move;
+
+    // 初期状態生成
+    static PartialState InitialState(const PartialProblem& problem) {
+        const auto positions = ComputePositions(
+            problem.H, problem.W, problem.tiles, problem.tile_type_separations);
+        auto h = (short)0;
+        auto hs = array<short, 16>();
+        for (auto i = 1; i < 16; i++)
+            h += hs[i] = ComputeH(positions, i, problem);
+        return PartialState{problem.tiles,
+                            ComputeHash(problem.H, problem.W, problem.tiles),
+                            h,
+                            0,
+                            h,
+                            hs,
+                            positions,
+                            -1};
+    }
 
     inline void
     MoveTemporarily(const Point to,
@@ -1656,21 +1686,9 @@ struct State {
         temporal_move = 0xff;
     }
 
-    inline auto PartialState(const int u, const int d, const int l,
-                             const int r) const {
-        auto state = State();
-        assert(u < d);
-        assert(l < r);
-        for (auto y = 0; y < u - d; y++) {
-            for (auto x = 0; x < r - l; x++) {
-                state.tiles[{y, x}] = tiles[{u + y, l + x}];
-            }
-        }
-    }
-
-    void Print() const {
+    void Print(const int h, const int w) const {
         cout << "State" << endl;
-        PrintTiles(input.N, tiles);
+        PrintTiles(h, w, tiles);
         cout << "hash=" << hash << endl;
         cout << "f=" << f << endl;
         cout << "g=" << g << endl;
@@ -1682,12 +1700,12 @@ struct State {
         cout << "parent=" << parent << endl;
     }
 };
-unsigned char State::temporal_move;
+unsigned char PartialState::temporal_move;
 
-auto state_buffer = Stack<State, 2000000>(); // 500 MB
+auto state_buffer = Stack<PartialState, 2000000>(); // 500 MB
 constexpr auto sz_mb = sizeof(state_buffer) / 1024 / 1024;
 
-struct StateAction {
+struct PartialStateAction {
     HashType hash; // 遷移先の状態のハッシュ
     int parent;
     short changed_h;
@@ -1701,9 +1719,9 @@ struct StateAction {
     }
     inline auto F() const { return G() + H(); }
 
-    inline auto ToState() const {
+    inline auto ToState(const PartialProblem& problem) const {
         const auto& old_state = state_buffer[parent];
-        auto state = State();
+        auto state = PartialState();
         state.tiles = old_state.tiles;
 
         const auto tmp = state.tiles[{old_state.positions[0] >> 4,
@@ -1719,8 +1737,8 @@ struct StateAction {
         state.hs = old_state.hs;
         state.hs[tile_type] = changed_h;
         state.positions = old_state.positions;
-        for (auto i = input.tile_type_separations[tile_type];
-             i < input.tile_type_separations[tile_type + 1]; i++) {
+        for (auto i = problem.tile_type_separations[tile_type];
+             i < problem.tile_type_separations[tile_type + 1]; i++) {
             if (state.positions[i] == to) {
                 swap(state.positions[0], state.positions[i]);
                 goto break_ok;
@@ -1736,91 +1754,19 @@ struct StateAction {
     }
 };
 
-template <class TilesType>
-auto ComputeHash(const int n, const TilesType& tiles) {
-    auto result = (HashType)0;
-    for (auto y = 0; y < n; y++)
-        for (auto x = 0; x < n; x++)
-            result ^= hash_table[y][x][tiles[{y, x}]];
-    return result;
-}
+auto SolvePartial(const PartialProblem problem) {
+    // TODO
 
-template <class TilesType>
-auto ComputePositions(const TilesType& tiles,
-                      const array<signed char, 17>& tile_type_separations) {
-    auto result = array<unsigned char, 100>();
-    auto indices = tile_type_separations;
-    for (auto y = 0; y < input.N; y++)
-        for (auto x = 0; x < input.N; x++)
-            result[indices[tiles[{y, x}]]++] = (unsigned char)(y << 4 | x);
-    return result;
-}
-
-// ヒューリスティック関数の計算
-auto ComputeH(const State& state, const State& target_state,
-              const int tile_type) {
-    // tiles は使わず positions だけ見る
-    assert(tile_type != 0);
-    static auto cost_matrix = Board<int, 50, 50>();
-    if (input.stat[tile_type] == 0)
-        return 0;
-    for (auto i = 0; i < input.stat[tile_type]; i++) {
-        const auto yx =
-            state.positions[input.tile_type_separations[tile_type] + i];
-        const auto y = yx >> 4;
-        const auto x = yx & 0b1111;
-        for (auto j = 0; j < input.stat[tile_type]; j++) {
-            const auto target_yx =
-                target_state
-                    .positions[input.tile_type_separations[tile_type] + j];
-            const auto target_y = target_yx >> 4;
-            const auto target_x = target_yx & 0b1111;
-            cost_matrix[{i + 1, j + 1}] = abs(y - target_y) + abs(x - target_x);
-        }
-    }
-    return Hungarian(input.stat[tile_type], cost_matrix);
-}
-
-auto PartialAStar() {
-    // ヒューリスティック関数を固定する場所だけで計算する
-
-    //
-}
-
-// A* 探索
-auto NaiveAStar() {
+    // A* 探索
     auto distances = robin_hood::unordered_map<HashType, short>(); // 距離が確定
     auto q = radix_heap::pair_radix_heap<short, StateAction>(); //
-
-    // 目標状態
-    auto target_state = State();
-    target_state.tiles = RandomTargetTree(input.N, input.stat);
-    target_state.hash = ComputeHash(input.N, target_state.tiles);
-    target_state.positions =
-        ComputePositions(target_state.tiles, input.tile_type_separations);
-    cout << "TARGET" << endl;
-    target_state.Print();
-    cout << endl;
-
-    // 初期状態生成
-    auto initial_state = State();
-    initial_state.tiles = input.tiles;
-    initial_state.hash = ComputeHash(input.N, initial_state.tiles);
-    initial_state.positions =
-        ComputePositions(initial_state.tiles, input.tile_type_separations);
-    initial_state.g = 0;
-    initial_state.h = 0;
-    for (auto i = 1; i < 16; i++) {
-        initial_state.h += initial_state.hs[i] =
-            ComputeH(initial_state, target_state, i);
-    }
-    initial_state.f = initial_state.g + initial_state.h;
-    initial_state.parent = -1;
 
     state_buffer.push(initial_state);
     distances[initial_state.hash] = initial_state.h;
 
     for (const auto d : {Point{0, 1}, {1, 0}, {0, -1}, {-1, 0}}) {
+        // TODO: 前の動きと逆のを省く
+
         auto action = StateAction();
         auto p_char = initial_state.positions[0];
         const auto v = Point{p_char >> 4, p_char & 0b1111};
@@ -1915,9 +1861,40 @@ auto NaiveAStar() {
     }
 }
 
+struct Input {
+    int N, T;
+    Tiles tiles;
+
+    void Read() {
+        cin >> N >> T;
+        string tmp;
+        for (auto y = 0; y < N; y++) {
+            cin >> tmp;
+            for (auto x = 0; x < N; x++) {
+                tiles[{y, x}] =
+                    tmp[x] <= '9' ? tmp[x] - '0' : tmp[x] - 'a' + 10;
+            }
+        }
+    }
+};
+
+auto input = Input();
+
+void TestSolvePartial() {
+    // 問題を設定
+    const auto input_stat = ComputeStat(input.N, input.N, input.tiles);
+    const auto target_tiles = RandomTargetTree(input.N, input_stat);
+
+    auto problem = PartialProblem(input.N, input.N, input.tiles, target_tiles,
+                                  0, input.N, 0, input.N);
+    auto result = SolvePartial(problem);
+
+    result.Print();
+}
+
 auto Initialize() {
     input.Read();
-    for (auto&& t : hash_table)
+    for (auto&& t : zobrist_table)
         for (auto&& tt : t)
             for (auto i = 1; i < 16; i++)
                 tt[i] = rng.next();
