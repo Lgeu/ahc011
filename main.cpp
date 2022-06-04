@@ -1204,11 +1204,6 @@ constexpr auto kU = 2;
 constexpr auto kR = 4;
 constexpr auto kD = 8;
 auto input = Input();
-static auto rng = Random(913418416u);
-
-const auto kBoxDrawings =
-    array<string, 16>{" ", "╸", "╹", "┛", "╺", "━", "┗", "┻",
-                      "╻", "┓", "┃", "┫", "┏", "┳", "┣", "╋"};
 
 // タイルの個数を数える
 auto ComputeStat(const int n, const Board<signed char, 10, 10>& tiles) {
@@ -1620,7 +1615,7 @@ auto TestSearchSpanningTree() {
 }
 
 using HashType = unsigned;
-auto hash_table = array<array<array<HashType, 16>, 10>, 10>();
+auto zobrist_table = array<array<array<HashType, 16>, 10>, 10>();
 
 struct State {
     Board<signed char, 10, 10> tiles;

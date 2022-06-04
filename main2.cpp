@@ -41,20 +41,18 @@
 #include <x86intrin.h>
 #endif
 
-#ifdef __GNUC__
-#pragma GCC target(                                                            \
-    "sse,sse2,sse3,ssse3,sse4,popcnt,abm,mmx,avx,avx2,tune=native")
-// #pragma GCC optimize("O3")
-#pragma GCC optimize("Ofast")
-//#pragma GCC optimize("unroll-loops")
-
+#ifdef __clang__
 #pragma clang attribute push(__attribute__((target("arch=skylake"))),          \
                              apply_to = function)
 // 最後に↓を貼る
-#ifdef __GNUC__
+#ifdef __clang__
 #pragma clang attribute pop
 #endif
 // 最後に↑を貼る
+#elif defined(__GNUC__)
+#pragma GCC target(                                                            \
+    "sse,sse2,sse3,ssse3,sse4,popcnt,abm,mmx,avx,avx2,tune=native")
+#pragma GCC optimize("Ofast")
 #endif
 
 // ========================== macroes ==========================
@@ -617,8 +615,8 @@ inline unsigned long long __builtin_clzll(const unsigned long long& x) {
     _BitScanReverse64(&r, x);
     return 63 - r;
 }
-#endif
 #pragma warning(disable : 4146)
+#endif
 /*
 iwi 先生の radix heap (https://github.com/iwiwi/radix-heap)
 The MIT License (MIT)
@@ -1543,6 +1541,8 @@ auto Hungarian(const int h, const int w, const Board<int, 50, 50>& A) {
             x0 = way[x0];
         } while (x0 != 0);
     }
+
+    // cout << "Hungarian " << -V[0] << endl;
     return -V[0];
 }
 
@@ -1564,39 +1564,43 @@ auto ComputePositions(const int h, const int w, const Tiles& tiles,
 
 struct PartialProblem {
     int H, W;
-    Tiles tiles;                                // 初期状態 H x W
-    Tiles target_tiles;                         // 目標 (H x W 全部)
-    int target_u, target_d, target_l, target_r; // とりあえず揃えたい場所
-    array<int, 16> stat;                        // 各タイルの数
-    array<int, 16> target_stat; // 揃えたい場所の各タイルの数
-    array<unsigned char, 100> target_positions; // 揃えたいタイルの位置たち
-    array<signed char, 17> tile_type_separations;        // stat の累積和
-    array<signed char, 17> target_tile_type_separations; // target_stat の累積和
+    Tiles tiles;                    // 初期状態 H x W
+    Tiles target_tiles;             // 目標 (H x W 全部)
+    int box_u, box_d, box_l, box_r; // とりあえず揃えたい場所
+    array<int, 16> stat;            // 各タイルの数
+    array<int, 16> target_box_stat; // 揃えたい場所の各タイルの数
+    array<unsigned char, 100> target_box_positions; // 揃えたいタイルの位置たち
+    array<signed char, 17> tile_type_separations; // stat の累積和
+    array<signed char, 17>
+        target_box_tile_type_separations; // target_box_stat の累積和
     PartialProblem(const int a_H, const int a_W, const Tiles& a_tiles,
                    const Tiles& a_target_tiles, const int u, const int d,
                    const int l, const int r)
         : H(a_H), W(a_W), tiles(a_tiles), target_tiles(a_target_tiles),
-          target_u(u), target_d(d), target_l(l), target_r(r) {
+          box_u(u), box_d(d), box_l(l), box_r(r) {
         stat = ComputeStat(H, W, tiles);
         assert(stat == ComputeStat(H, W, target_tiles));
-        target_stat = ComputeStat(u, d, l, r, tiles);
+        target_box_stat = ComputeStat(u, d, l, r, target_tiles);
         tile_type_separations[0] = 0;
-        target_tile_type_separations[0] = 0;
+        target_box_tile_type_separations[0] = 0;
         for (auto i = 0; i < 16; i++) {
             tile_type_separations[i + 1] = tile_type_separations[i] + stat[i];
-            target_tile_type_separations[i + 1] =
-                target_tile_type_separations[i] + target_stat[i];
+            target_box_tile_type_separations[i + 1] =
+                target_box_tile_type_separations[i] + target_box_stat[i];
         }
-        target_positions =
-            ComputePositions(u, d, l, r, tiles, target_tile_type_separations);
+        target_box_positions = ComputePositions(
+            u, d, l, r, target_tiles, target_box_tile_type_separations);
     }
 };
 
 struct PartialProblemResult {
-    // TODO
+    vector<char> path;
 
     void Print() const {
-        // TODO
+        for (const auto& c : path) {
+            cout << c;
+        }
+        cout << endl;
     }
 };
 
@@ -1614,24 +1618,25 @@ auto ComputeH(const array<unsigned char, 100>& positions, const int tile_type,
     // tiles は使わず positions だけ見る
     assert(tile_type != 0);
     static auto cost_matrix = Board<int, 50, 50>();
-    if (problem.target_stat[tile_type] == 0)
+    if (problem.target_box_stat[tile_type] == 0)
         return 0;
     for (auto i = 0; i < problem.stat[tile_type]; i++) {
         const auto yx = positions[problem.tile_type_separations[tile_type] + i];
         const auto y = yx >> 4;
         const auto x = yx & 0b1111;
-        for (auto j = 0; j < problem.target_stat[tile_type]; j++) {
+        for (auto j = 0; j < problem.target_box_stat[tile_type]; j++) {
             const auto target_yx =
-                problem.target_positions
-                    [problem.target_tile_type_separations[tile_type] + j];
+                problem.target_box_positions
+                    [problem.target_box_tile_type_separations[tile_type] + j];
             const auto target_y = target_yx >> 4;
             const auto target_x = target_yx & 0b1111;
             cost_matrix[{j + 1, i + 1}] = abs(y - target_y) + abs(x - target_x);
         }
     }
-    assert(problem.target_stat[tile_type] <= problem.stat[tile_type]);
-    return Hungarian(problem.target_stat[tile_type], problem.stat[tile_type],
-                     cost_matrix);
+    assert(problem.target_box_stat[tile_type] <= problem.stat[tile_type]);
+    // cost_matrix.Print();
+    return Hungarian(problem.target_box_stat[tile_type],
+                     problem.stat[tile_type], cost_matrix);
 }
 
 struct PartialState {
@@ -1645,6 +1650,7 @@ struct PartialState {
         positions; // タイルの種類ごとの場所 y/x 4 ビットずつ
     int parent;
     static unsigned char temporal_move;
+    static Stack<PartialState, 2000000> buffer;
 
     // 初期状態生成
     static PartialState InitialState(const PartialProblem& problem) {
@@ -1664,10 +1670,10 @@ struct PartialState {
                             -1};
     }
 
+    // positions だけ一時的に変化させる
     inline void
     MoveTemporarily(const Point to,
                     const array<signed char, 17>& tile_type_separations) {
-        // positions だけ変化させる
         const auto tile_type = tiles[to];
         const auto to_char = (unsigned char)(to.y << 4 | to.x);
         for (auto i = tile_type_separations[tile_type];
@@ -1681,12 +1687,44 @@ struct PartialState {
         assert(false);
     }
 
+    // 一時的な変化を戻す
     inline void MoveBack() {
         swap(positions[0], positions[temporal_move]);
         temporal_move = 0xff;
     }
 
-    void Print(const int h, const int w) const {
+    inline auto Path() const {
+        auto result = vector<char>();
+        auto idx = parent;
+        auto u = positions[0];
+        while (idx >= 0) {
+            const auto v = buffer[idx].positions[0];
+            auto d = u - v;
+            switch (d) {
+            case 1:
+                result.push_back('R');
+                break;
+            case -1:
+                result.push_back('L');
+                break;
+            case 16:
+                result.push_back('D');
+                break;
+            case -16:
+                result.push_back('U');
+                break;
+            default:
+                cout << "????? " << d;
+                assert(false);
+            }
+            idx = buffer[idx].parent;
+            u = v;
+        }
+        reverse(result.begin(), result.end());
+        return result;
+    }
+
+    inline void Print(const int h, const int w) const {
         cout << "State" << endl;
         PrintTiles(h, w, tiles);
         cout << "hash=" << hash << endl;
@@ -1701,8 +1739,8 @@ struct PartialState {
     }
 };
 unsigned char PartialState::temporal_move;
-
-auto state_buffer = Stack<PartialState, 2000000>(); // 500 MB
+auto PartialState::buffer = Stack<PartialState, 2000000>(); // 500 MB
+auto& state_buffer = PartialState::buffer;
 constexpr auto sz_mb = sizeof(state_buffer) / 1024 / 1024;
 
 struct PartialStateAction {
@@ -1710,6 +1748,10 @@ struct PartialStateAction {
     int parent;
     short changed_h;
     unsigned char to; // 0 のタイルの移動先 y/x 4 ビットずつ
+
+    // inline PartialStateAction(PartialState& state, ){
+
+    // }
 
     inline auto G() const { return state_buffer[parent].g + 1; }
     inline auto H() const {
@@ -1734,8 +1776,6 @@ struct PartialStateAction {
         state.tiles[{to >> 4, to & 0b1111}] = 0;
         state.hash = hash;
         state.parent = parent;
-        state.hs = old_state.hs;
-        state.hs[tile_type] = changed_h;
         state.positions = old_state.positions;
         for (auto i = problem.tile_type_separations[tile_type];
              i < problem.tile_type_separations[tile_type + 1]; i++) {
@@ -1749,56 +1789,51 @@ struct PartialStateAction {
         state.g = G();
         state.h = H();
         state.f = state.g + state.h;
+        state.hs = old_state.hs;
+        state.hs[tile_type] = changed_h;
 
         return state;
     }
 };
 
-auto SolvePartial(const PartialProblem problem) {
+// A* 探索
+static auto SolvePartial(const PartialProblem problem) {
     // TODO
 
-    // A* 探索
+    // 距離、キュー
     auto distances = robin_hood::unordered_map<HashType, short>(); // 距離が確定
-    auto q = radix_heap::pair_radix_heap<short, StateAction>(); //
+    auto q = radix_heap::pair_radix_heap<short, PartialStateAction>(); //
 
+    // 初期状態
+    auto initial_state = PartialState::InitialState(problem);
     state_buffer.push(initial_state);
     distances[initial_state.hash] = initial_state.h;
 
+    // 初期状態からの遷移をキューに入れる
     for (const auto d : {Point{0, 1}, {1, 0}, {0, -1}, {-1, 0}}) {
         // TODO: 前の動きと逆のを省く
 
-        auto action = StateAction();
+        auto action = PartialStateAction();
         auto p_char = initial_state.positions[0];
         const auto v = Point{p_char >> 4, p_char & 0b1111};
         const auto u = v + d;
-        if (!(0 <= u.x && u.x < input.N && 0 <= u.y && u.y < input.N))
+        if (!(0 <= u.x && u.x < problem.W && 0 <= u.y && u.y < problem.H))
             continue;
         action.parent = 0;
         action.to = (unsigned char)(u.y << 4 | u.x);
         const auto tile_type = initial_state.tiles[u];
-        action.hash = initial_state.hash ^ hash_table[v.y][v.x][tile_type] ^
-                      hash_table[u.y][u.x][tile_type];
+        action.hash = initial_state.hash ^ zobrist_table[v.y][v.x][tile_type] ^
+                      zobrist_table[u.y][u.x][tile_type];
         assert(initial_state.tiles[v] == 0);
-        initial_state.MoveTemporarily(u, input.tile_type_separations);
-        action.changed_h = ComputeH(initial_state, target_state, tile_type);
+        initial_state.MoveTemporarily(u, problem.tile_type_separations);
+        action.changed_h =
+            ComputeH(initial_state.positions, tile_type, problem);
         initial_state.MoveBack();
         q.push(action.F(), action);
         distances[action.hash] = action.F();
-
-        // sanity check
-        {
-            const auto s = action.ToState();
-            for (auto i = 1; i < 16; i++) {
-                const auto h_check = ComputeH(s, target_state, i);
-                if (h_check != s.hs[i]) {
-                    cout << "\nhが合わない、おしまい！！！" << endl;
-                    s.Print();
-                    assert(false);
-                }
-            }
-        }
     }
 
+    // 探索
     for (auto iteration = 0ll;; iteration++) {
         const auto fv = q.top_key();
         const auto old_action = q.top_value();
@@ -1807,39 +1842,44 @@ auto SolvePartial(const PartialProblem problem) {
             continue;
 
         const auto idx_state = state_buffer.size();
-        state_buffer.push(old_action.ToState());
+        state_buffer.push(old_action.ToState(problem));
         auto& state = state_buffer.back();
+
+        if (state.h == 0) {
+            // 目標発見
+            return PartialProblemResult{state.Path()};
+        }
 
         if ((iteration & iteration - 1) == 0) {
             cout << "iteration " << iteration << endl;
-            state.Print();
+            state.Print(problem.H, problem.W);
         }
 
         for (const auto& d : {Point{0, 1}, {1, 0}, {0, -1}, {-1, 0}}) {
-            auto action = StateAction();
+            auto action = PartialStateAction();
             auto p_char = state.positions[0];
             const auto v = Point{p_char >> 4, p_char & 0b1111};
             const auto u = v + d;
-            if (!(0 <= u.x && u.x < input.N && 0 <= u.y && u.y < input.N))
+            if (!(0 <= u.x && u.x < problem.W && 0 <= u.y && u.y < problem.H))
                 continue;
             action.parent = idx_state;
             action.to = (unsigned char)(u.y << 4 | u.x);
             const auto tile_type = state.tiles[u];
-            action.hash = state.hash ^ hash_table[v.y][v.x][tile_type] ^
-                          hash_table[u.y][u.x][tile_type];
+            action.hash = state.hash ^ zobrist_table[v.y][v.x][tile_type] ^
+                          zobrist_table[u.y][u.x][tile_type];
             auto distance_it = distances.find(action.hash);
             const auto found = distance_it != distances.end();
             if (found && distance_it->second <= state.f)
                 continue;
-            state.MoveTemporarily(u, input.tile_type_separations);
-            action.changed_h = ComputeH(state, target_state, tile_type);
+            state.MoveTemporarily(u, problem.tile_type_separations);
+            action.changed_h = ComputeH(state.positions, tile_type, problem);
             state.MoveBack();
             const auto f = action.F();
             if (state.f > f) {
                 // デバッグ
                 cout << "やば！！！" << endl;
-                state.Print();
-                action.ToState().Print();
+                state.Print(problem.H, problem.W);
+                action.ToState(problem).Print(problem.H, problem.W);
             }
             assert(state.f <= f);
             if (found && distance_it->second <= f)
@@ -1851,12 +1891,6 @@ auto SolvePartial(const PartialProblem problem) {
             }
             q.push(f, action);
             distances[action.hash] = f;
-
-            if (action.hash == target_state.hash) {
-                cout << "target state found!!" << endl;
-                action.ToState().Print();
-                return;
-            }
         }
     }
 }
@@ -1903,6 +1937,5 @@ auto Initialize() {
 int main() {
     Initialize();
     // TestSearchSpanningTree();
-    // TestHungarian();
-    NaiveAStar();
+    TestSolvePartial();
 }
