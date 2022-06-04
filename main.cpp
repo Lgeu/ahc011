@@ -333,6 +333,9 @@ template <class T, int max_size> struct Stack {
     }
     Stack& operator=(Stack&&) = default;
     inline array<T, max_size>& data() { return *(array<T, max_size>*)&buffer; }
+    inline array<T, max_size>& data() const {
+        return *(array<T, max_size>*)&buffer;
+    }
     inline bool empty() const { return 0 == right; }
     inline void push(const T& value) {
         assert(right < max_size);
@@ -1689,6 +1692,11 @@ auto ComputeH(const array<unsigned char, 100>& positions, const int tile_type,
     static auto cost_matrix = Board<int, 50, 50>();
     if (problem.target_box_stat[tile_type] == 0)
         return 0;
+    const auto coef = [&](const auto target_y, const auto target_x) {
+        auto tmp =
+            abs(target_x - problem.W / 2) + abs(target_y - problem.H / 2) + 1;
+        return 1; // tmp* tmp;
+    };
     for (auto i = 0; i < problem.stat[tile_type]; i++) {
         const auto yx = positions[problem.tile_type_separations[tile_type] + i];
         const auto y = yx >> 4;
@@ -1699,7 +1707,9 @@ auto ComputeH(const array<unsigned char, 100>& positions, const int tile_type,
                     [problem.target_box_tile_type_separations[tile_type] + j];
             const auto target_y = target_yx >> 4;
             const auto target_x = target_yx & 0b1111;
-            cost_matrix[{j + 1, i + 1}] = abs(y - target_y) + abs(x - target_x);
+            cost_matrix[{j + 1, i + 1}] =
+                (abs(y - target_y) + abs(x - target_x)) *
+                coef(target_y, target_x);
         }
     }
     assert(problem.target_box_stat[tile_type] <= problem.stat[tile_type]);
@@ -1745,6 +1755,7 @@ struct PartialState {
                     const array<signed char, 17>& tile_type_separations) {
         const auto tile_type = tiles[to];
         const auto to_char = (unsigned char)(to.y << 4 | to.x);
+        swap(tiles[to], tiles[{positions[0] >> 4, positions[0] & 0b1111}]);
         for (auto i = tile_type_separations[tile_type];
              i < tile_type_separations[tile_type + 1]; i++) {
             if (positions[i] == to_char) {
@@ -1759,7 +1770,69 @@ struct PartialState {
     // 一時的な変化を戻す
     inline void MoveBack() {
         swap(positions[0], positions[temporal_move]);
+        swap(tiles[{positions[temporal_move] >> 4,
+                    positions[temporal_move] & 0b1111}],
+             tiles[{positions[0] >> 4, positions[0] & 0b1111}]);
         temporal_move = 0xff;
+    }
+
+    inline auto H2(const PartialProblem& problem) const {
+
+        auto scores = Board<bool, 10, 10>();
+        for (auto y = 0; y < problem.H; y++) {
+            for (auto x = 0; x < problem.W; x++) {
+                if (tiles[{y, x}] == problem.target_tiles[{y, x}] &&
+                    (y == 0 ||
+                     tiles[{y - 1, x}] == problem.target_tiles[{y - 1, x}]) &&
+                    (x == 0 ||
+                     tiles[{y, x - 1}] == problem.target_tiles[{y, x - 1}])) {
+                    scores[{y, x}] = true;
+                } else
+                    break;
+            }
+            for (auto x = problem.W - 1; x >= 0; x--) {
+                if (tiles[{y, x}] == problem.target_tiles[{y, x}] &&
+                    (y == 0 ||
+                     tiles[{y - 1, x}] == problem.target_tiles[{y - 1, x}]) &&
+                    (x == problem.W - 1 ||
+                     tiles[{y, x + 1}] == problem.target_tiles[{y, x + 1}])) {
+                    scores[{y, x}] = true;
+                } else
+                    break;
+            }
+        }
+
+        for (auto y = problem.H - 1; y >= 0; y--) {
+            for (auto x = 0; x < problem.W; x++) {
+                if (tiles[{y, x}] == problem.target_tiles[{y, x}] &&
+                    (y == problem.H - 1 ||
+                     tiles[{y + 1, x}] == problem.target_tiles[{y + 1, x}]) &&
+                    (x == 0 ||
+                     tiles[{y, x - 1}] == problem.target_tiles[{y, x - 1}])) {
+                    scores[{y, x}] = true;
+                } else
+                    break;
+            }
+            for (auto x = problem.W - 1; x >= 0; x--) {
+                if (tiles[{y, x}] == problem.target_tiles[{y, x}] &&
+                    (y == problem.H - 1 ||
+                     tiles[{y + 1, x}] == problem.target_tiles[{y + 1, x}]) &&
+                    (x == problem.W - 1 ||
+                     tiles[{y, x + 1}] == problem.target_tiles[{y, x + 1}])) {
+                    scores[{y, x}] = true;
+                } else
+                    break;
+            }
+        }
+
+        auto result = 0;
+        for (auto y = 0; y < problem.H; y++) {
+            for (auto x = 0; x < problem.W; x++) {
+                result -= scores[{y, x}];
+            }
+        }
+
+        return result;
     }
 
     inline auto Path() const {
@@ -1816,6 +1889,7 @@ struct PartialStateAction {
     HashType hash; // 遷移先の状態のハッシュ
     int parent;
     short changed_h;
+    short h2;
     unsigned char to; // 0 のタイルの移動先 y/x 4 ビットずつ
 
     inline auto G() const { return state_buffer[parent].g + 1; }
@@ -1824,6 +1898,7 @@ struct PartialStateAction {
         return state.h + changed_h -
                state.hs[state.tiles[{to >> 4, to & 0b1111}]];
     }
+    inline auto HSum() const { return H() + h2 * 0; }
     inline auto F() const { return G() + H(); }
 
     inline auto ToState(const PartialProblem& problem) const {
@@ -1872,7 +1947,7 @@ static auto SolvePartial(const PartialProblem problem) {
     state_buffer.push(initial_state);
     searched.insert(initial_state.hash);
 
-    constexpr auto kBeamWidth = 10000;
+    constexpr auto kBeamWidth = 5000;
     auto beam_count = 0;
     auto current_f = 0;
     static auto next_state_actions =
@@ -1887,8 +1962,13 @@ static auto SolvePartial(const PartialProblem problem) {
         auto p_char = initial_state.positions[0];
         const auto v = Point{p_char >> 4, p_char & 0b1111};
         const auto u = v + d;
-        if (!(0 <= u.x && u.x < problem.W && 0 <= u.y && u.y < problem.H))
+        cout << u << endl;
+        if (!(0 <= u.x && u.x < problem.W && 0 <= u.y && u.y < problem.H)) {
+            cout << (0 <= u.x) << (u.x < problem.W) << (0 <= u.y)
+                 << (u.y < problem.H) << endl;
             continue;
+        }
+        cout << "ok" << endl;
         action.parent = 0;
         action.to = (unsigned char)(u.y << 4 | u.x);
         const auto tile_type = initial_state.tiles[u];
@@ -1898,10 +1978,14 @@ static auto SolvePartial(const PartialProblem problem) {
         initial_state.MoveTemporarily(u, problem.tile_type_separations);
         action.changed_h =
             ComputeH(initial_state.positions, tile_type, problem);
+        action.h2 = initial_state.H2(problem);
         initial_state.MoveBack();
+        assert(initial_state.tiles[v] == 0);
         next_state_actions.push(action);
         searched.insert(action.hash);
     }
+
+    cout << "next_state_actions.size()" << next_state_actions.size() << endl;
 
     for (auto step = 0;; step++) {
         if (next_state_actions.size() == 0) {
@@ -1914,18 +1998,20 @@ static auto SolvePartial(const PartialProblem problem) {
                 next_state_actions.begin() + kBeamWidth,
                 next_state_actions.end(),
                 [](const PartialStateAction& l, const PartialStateAction& r) {
-                    return l.H() < r.H();
+                    return l.HSum() < r.HSum();
                 });
             next_state_actions.resize(kBeamWidth);
         }
 
         if (step % 10 == 0) {
-            // const auto& state = next_state_actions[0];
-            // cout << "step " << step << endl;
-            // state.ToState(problem).Print(problem.H, problem.W);
+            const auto& state = next_state_actions[0];
+            cout << "step " << step << endl;
+            state.ToState(problem).Print(problem.H, problem.W);
         }
 
-        for (const auto& state_action : next_state_actions) {
+        const auto state_actions = next_state_actions;
+        next_state_actions.clear();
+        for (const auto& state_action : state_actions) {
             const auto idx_state = state_buffer.size();
             state_buffer.push(state_action.ToState(problem));
             auto& state = state_buffer.back();
@@ -1951,6 +2037,7 @@ static auto SolvePartial(const PartialProblem problem) {
                 state.MoveTemporarily(u, problem.tile_type_separations);
                 action.changed_h =
                     ComputeH(state.positions, tile_type, problem);
+                action.h2 = state.H2(problem);
                 state.MoveBack();
                 next_state_actions.push(action);
             }
@@ -1979,7 +2066,7 @@ auto input = Input();
 
 void TestSolvePartial() {
     // 問題を設定
-    auto best = 1000;
+    auto best = 999999999;
     auto best_problem = PartialProblem();
     for (int i = 0; i < 200; i++) {
         const auto input_stat = ComputeStat(input.N, input.N, input.tiles);
@@ -2001,8 +2088,22 @@ void TestSolvePartial() {
 }
 
 void TestSolvePartial2() {
-    const auto input_stat = ComputeStat(input.N, input.N, input.tiles);
-    const auto target_tiles = RandomTargetTree(input.N, input_stat);
+    // 問題を設定
+    auto best = 1000;
+    auto best_tiles = Tiles();
+    for (int i = 0; i < 200; i++) {
+        const auto input_stat = ComputeStat(input.N, input.N, input.tiles);
+        const auto target_tiles = RandomTargetTree(input.N, input_stat);
+
+        const auto problem =
+            PartialProblem(input.N, input.N, input.tiles, target_tiles, 0,
+                           input.N, 0, input.N);
+        const auto h = PartialState::InitialState(problem).h;
+        cout << "h=" << h << endl;
+        if (chmin(best, h)) {
+            best_tiles = target_tiles;
+        }
+    }
 
     auto left_has_0 = false;
     for (auto y = 0; y < input.N; y++)
@@ -2011,8 +2112,8 @@ void TestSolvePartial2() {
 
     const auto l = left_has_0 ? input.N - 1 : 0;
     const auto r = l + 1;
-    auto problem = PartialProblem(input.N, input.N, input.tiles, target_tiles,
-                                  0, input.N, l, r);
+    auto problem = PartialProblem(input.N, input.N, input.tiles, best_tiles, 0,
+                                  input.N, l, r);
     while (true) {
         //
         const auto result = SolvePartial(problem);
@@ -2044,5 +2145,5 @@ int main() {
     // TestSearchSpanningTree();
     TestSolvePartial();
     // TestSolvePartial2();
-    //   TestTargetPatterns();
+    //    TestTargetPatterns();
 }
