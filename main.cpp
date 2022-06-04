@@ -1573,9 +1573,10 @@ struct PartialProblem {
     array<signed char, 17> tile_type_separations; // stat の累積和
     array<signed char, 17>
         target_box_tile_type_separations; // target_box_stat の累積和
-    PartialProblem(const int a_H, const int a_W, const Tiles& a_tiles,
-                   const Tiles& a_target_tiles, const int u, const int d,
-                   const int l, const int r)
+
+    inline PartialProblem(const int a_H, const int a_W, const Tiles& a_tiles,
+                          const Tiles& a_target_tiles, const int u, const int d,
+                          const int l, const int r)
         : H(a_H), W(a_W), tiles(a_tiles), target_tiles(a_target_tiles),
           box_u(u), box_d(d), box_l(l), box_r(r) {
         stat = ComputeStat(H, W, tiles);
@@ -1591,10 +1592,75 @@ struct PartialProblem {
         target_box_positions = ComputePositions(
             u, d, l, r, target_tiles, target_box_tile_type_separations);
     }
+
+    inline auto BoxSize() const { return (box_d - box_u) * (box_r - box_l); }
+
+    inline auto IsLastProblem() const {
+        return box_d - box_u == H && box_r - box_l == W;
+    }
+
+    // 次の問題たち (TODO: 適宜増やしたりする)
+    inline auto Partials(const Tiles& result_tiles) const {
+        auto result = vector<PartialProblem>();
+        auto new_tiles = Tiles(); // 今の解から得られる次の初期状態
+        auto new_target_tiles = Tiles();
+        const auto free_u = box_d == H ? 0 : box_d;
+        const auto free_d = box_u == 0 ? H : box_u;
+        const auto free_l = box_r == W ? 0 : box_r;
+        const auto free_r = box_l == 0 ? W : box_l;
+        const auto new_H = free_d - free_u;
+        const auto new_W = free_r - free_l;
+        for (auto y = 0; y < new_H; y++) {
+            for (auto x = 0; x < new_W; x++) {
+                new_tiles[{y, x}] = result_tiles[{free_u + y, free_l + x}];
+                new_target_tiles[{y, x}] =
+                    target_tiles[{free_u + y, free_l + x}];
+            }
+        }
+
+        // 全部
+        result.emplace_back(new_H, new_W, new_tiles, new_target_tiles, 0, new_H,
+                            0, new_W);
+        if (new_H > 3) {
+            // 上
+            for (auto x = 0; x < new_W; x++)
+                if (new_target_tiles[{0, x}] == 0)
+                    goto skip_up;
+            result.emplace_back(new_H, new_W, new_tiles, new_target_tiles, 0, 1,
+                                0, new_W);
+        skip_up:
+            // 下
+            for (auto x = 0; x < new_W; x++)
+                if (new_target_tiles[{new_H - 1, x}] == 0)
+                    goto skip_down;
+            result.emplace_back(new_H, new_W, new_tiles, new_target_tiles,
+                                new_H - 1, new_H, 0, new_W);
+        skip_down:;
+        }
+        if (new_W > 3) {
+            // 左
+            for (auto y = 0; y < new_H; y++)
+                if (new_target_tiles[{y, 0}] == 0)
+                    goto skip_left;
+            result.emplace_back(new_H, new_W, new_tiles, new_target_tiles, 0,
+                                new_H, 0, 1);
+        skip_left:
+            // 右
+            for (auto y = 0; y < new_H; y++)
+                if (new_target_tiles[{y, new_W - 1}] == 0)
+                    goto skip_right;
+            result.emplace_back(new_H, new_W, new_tiles, new_target_tiles, 0,
+                                new_H, new_W - 1, new_W);
+        skip_right:;
+        }
+
+        return result;
+    }
 };
 
 struct PartialProblemResult {
     vector<char> path;
+    Tiles tiles;
 
     void Print() const {
         for (const auto& c : path) {
@@ -1794,7 +1860,7 @@ struct PartialStateAction {
 
 // A* 探索
 static auto SolvePartial(const PartialProblem problem) {
-    // TODO
+    state_buffer.clear();
 
     // 距離、キュー
     auto distances = robin_hood::unordered_map<HashType, short>(); // 距離が確定
@@ -1843,12 +1909,12 @@ static auto SolvePartial(const PartialProblem problem) {
 
         if (state.h == 0) {
             // 目標発見
-            return PartialProblemResult{state.Path()};
+            return PartialProblemResult{state.Path(), state.tiles};
         }
 
         if ((iteration & iteration - 1) == 0) {
-            cout << "iteration " << iteration << endl;
-            state.Print(problem.H, problem.W);
+            // cout << "iteration " << iteration << endl;
+            // state.Print(problem.H, problem.W);
         }
 
         for (const auto& d : {Point{0, 1}, {1, 0}, {0, -1}, {-1, 0}}) {
@@ -1915,11 +1981,34 @@ void TestSolvePartial() {
     const auto input_stat = ComputeStat(input.N, input.N, input.tiles);
     const auto target_tiles = RandomTargetTree(input.N, input_stat);
 
-    auto problem = PartialProblem(input.N, input.N, input.tiles, target_tiles,
-                                  0, input.N, 0, input.N);
-    auto result = SolvePartial(problem);
+    const auto problem = PartialProblem(input.N, input.N, input.tiles,
+                                        target_tiles, 0, input.N, 0, input.N);
+    const auto result = SolvePartial(problem);
 
     result.Print();
+}
+
+void TestSolvePartial2() {
+    const auto input_stat = ComputeStat(input.N, input.N, input.tiles);
+    const auto target_tiles = RandomTargetTree(input.N, input_stat);
+
+    auto left_has_0 = false;
+    for (auto y = 0; y < input.N; y++)
+        if (input.tiles[{y, 0}] == 0)
+            left_has_0 = true;
+
+    const auto l = left_has_0 ? input.N - 1 : 0;
+    const auto r = l + 1;
+    auto problem = PartialProblem(input.N, input.N, input.tiles, target_tiles,
+                                  0, input.N, l, r);
+    while (true) {
+        //
+        const auto result = SolvePartial(problem);
+        result.Print();
+        if (problem.IsLastProblem())
+            break;
+        problem = problem.Partials(result.tiles).back();
+    }
 }
 
 auto Initialize() {
@@ -1930,8 +2019,18 @@ auto Initialize() {
                 tt[i] = rng.next();
 }
 
+auto TestTargetPatterns() {
+    const auto input_stat = ComputeStat(input.N, input.N, input.tiles);
+    for (int trial = 0; trial < 5; trial++) {
+        const auto target_tiles = RandomTargetTree(input.N, input_stat);
+        PrintTiles(input.N, input.N, target_tiles);
+    }
+}
+
 int main() {
     Initialize();
     // TestSearchSpanningTree();
-    TestSolvePartial();
+    // TestSolvePartial();
+    TestSolvePartial2();
+    // TestTargetPatterns();
 }
