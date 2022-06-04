@@ -925,7 +925,7 @@ class pair_radix_heap {
 
 struct Input {
     int N, T;
-    Board<int, 10, 10> tiles;
+    Board<signed char, 10, 10> tiles;
     array<int, 16> stat;
     array<signed char, 17> tile_type_separations;
 
@@ -963,7 +963,7 @@ const auto kBoxDrawings =
                       "╻", "┓", "┃", "┫", "┏", "┳", "┣", "╋"};
 
 // タイルの個数を数える
-auto ComputeStat(const int n, const Board<int, 10, 10>& tiles) {
+auto ComputeStat(const int n, const Board<signed char, 10, 10>& tiles) {
     auto stat = array<int, 16>();
     for (auto y = 0; y < n; y++) {
         for (auto x = 0; x < n; x++) {
@@ -989,7 +989,7 @@ auto RandomSpaningTree(const int n) {
         }
     }
     auto uf = atcoder::dsu(n * n);
-    auto tiles = Board<int, 10, 10>();
+    auto tiles = Board<signed char, 10, 10>();
     auto n_added_edges = 0;
     for (auto idx_edges = 0; n_added_edges < n * n - 2; idx_edges++) {
         const auto r = rng.randint(idx_edges, (int)edges.size());
@@ -1012,8 +1012,13 @@ auto RandomSpaningTree(const int n) {
     return tiles;
 }
 
-void PrintTiles(const int n, const Board<int, 10, 10>& b) {
-    b.Print();
+void PrintTiles(const int n, const Board<signed char, 10, 10>& b) {
+    for (auto y = 0; y < n; y++) {
+        for (auto x = 0; x < n; x++) {
+            cout << (int)b[{y, x}] << " ";
+        }
+        cout << endl;
+    }
     for (auto y = 0; y < n; y++) {
         for (auto x = 0; x < n; x++) {
             cout << kBoxDrawings[b[{y, x}]];
@@ -1138,7 +1143,7 @@ auto RandomTargetTree(const int n, const array<int, 16>& target_stat) {
         {
             // 足す
             // DFS
-            auto region = Board<int, 10, 10>();
+            auto region = Board<signed char, 10, 10>();
             auto region_cnt = 1;
             for (auto y = 0; y < n; y++) {
                 for (auto x = 0; x < n; x++) {
@@ -1370,7 +1375,7 @@ using HashType = unsigned;
 auto hash_table = array<array<array<HashType, 16>, 10>, 10>();
 
 struct State {
-    Board<int, 10, 10> tiles;
+    Board<signed char, 10, 10> tiles;
     HashType hash; // 衝突するとどうなる？？？
     short f;       // g + h
     short g;       // 現在までの距離
