@@ -1422,12 +1422,13 @@ struct State {
 };
 unsigned char State::temporal_move;
 
-auto state_buffer = Stack<State, 1000000>(); // 500 MB
+auto state_buffer = Stack<State, 2000000>(); // 500 MB
+constexpr auto sz_mb = sizeof(state_buffer) / 1024 / 1024;
 
 struct StateAction {
     HashType hash; // 遷移先の状態のハッシュ
-    short changed_h;
     int parent;
+    short changed_h;
     unsigned char to; // 0 のタイルの移動先 y/x 4 ビットずつ
 
     inline auto G() const { return state_buffer[parent].g + 1; }
@@ -1518,7 +1519,7 @@ auto ComputeH(const State& state, const State& target_state,
 
 // A* 探索
 auto NaiveAStar() {
-    auto distances = map<HashType, short>(); // 距離が確定
+    auto distances = unordered_map<HashType, short>(); // 距離が確定
     auto q = radix_heap::pair_radix_heap<short, StateAction>(); //
 
     // 目標状態
@@ -1609,8 +1610,8 @@ auto NaiveAStar() {
             action.hash = state.hash ^ hash_table[v.y][v.x][tile_type] ^
                           hash_table[u.y][u.x][tile_type];
             auto distance_it = distances.find(action.hash);
-            if (distance_it != distances.end() &&
-                distance_it->second <= state.f)
+            const auto found = distance_it != distances.end();
+            if (found && distance_it->second <= state.f)
                 continue;
             state.MoveTemporarily(u);
             action.changed_h = ComputeH(state, target_state, tile_type);
@@ -1623,9 +1624,13 @@ auto NaiveAStar() {
                 action.ToState().Print();
             }
             assert(state.f <= f);
-            if (distance_it != distances.end() && distance_it->second <= f)
+            if (found && distance_it->second <= f)
                 continue;
-            distance_it->second = f;
+            if (found) {
+                distance_it->second = f;
+            } else {
+                distances[action.hash] = f;
+            }
             q.push(f, action);
             distances[action.hash] = f;
 

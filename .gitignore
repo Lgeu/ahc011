@@ -5,3 +5,5 @@
 /tools/*/*/*.*
 /tools/target/*
 __pycache__
+perf.data
+perf.data.old
