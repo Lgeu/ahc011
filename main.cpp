@@ -1379,7 +1379,43 @@ struct State {
     array<unsigned char, 100>
         positions; // タイルの種類ごとの場所 y/x 4 ビットずつ
     int parent;
+    static unsigned char temporal_move;
+
+    inline void MoveTemporarily(const Point to) {
+        // positions だけ変化させる
+        const auto tile_type = tiles[to];
+        const auto to_char = (unsigned char)(to.y << 4 | to.x);
+        for (auto i = input.tile_type_separations[tile_type];
+             i < input.tile_type_separations[tile_type + 1]; i++) {
+            if (positions[i] == to_char) {
+                temporal_move = i;
+                swap(positions[0], positions[i]);
+                return;
+            }
+        }
+        assert(false);
+    }
+
+    inline void MoveBack() {
+        swap(positions[0], positions[temporal_move]);
+        temporal_move = 0xff;
+    }
+
+    void Print() const {
+        cout << "State" << endl;
+        PrintTiles(input.N, tiles);
+        cout << "hash=" << hash << endl;
+        cout << "f=" << f << endl;
+        cout << "g=" << g << endl;
+        cout << "h=" << h << endl;
+        cout << "hs=";
+        for (const auto hi : hs)
+            cout << hi << ",";
+        cout << endl;
+        cout << "parent=" << parent << endl;
+    }
 };
+unsigned char State::temporal_move;
 
 auto state_buffer = Stack<State, 1000000>(); // 500 MB
 
@@ -1437,7 +1473,7 @@ auto ComputeHash(const int n, const TilesType& tiles) {
     auto result = (HashType)0;
     for (auto y = 0; y < n; y++)
         for (auto x = 0; x < n; x++)
-            result += hash_table[y][x][tiles[{y, x}]];
+            result ^= hash_table[y][x][tiles[{y, x}]];
     return result;
 }
 
@@ -1446,25 +1482,27 @@ template <class TilesType> auto ComputePositions(const TilesType& tiles) {
     auto indices = input.tile_type_separations;
     for (auto y = 0; y < input.N; y++)
         for (auto x = 0; x < input.N; x++)
-            result[indices[tiles[{y, x}]]++] = (unsigned char)(y << 4 & x);
+            result[indices[tiles[{y, x}]]++] = (unsigned char)(y << 4 | x);
     return result;
 }
 
 // ヒューリスティック関数の計算
 auto ComputeH(const State& state, const State& target_state,
               const int tile_type) {
+    // tiles は使わず positions だけ見る
     assert(tile_type != 0);
     static auto cost_matrix = Board<int, 50, 50>();
     if (input.stat[tile_type] == 0)
         return 0;
-    for (auto i = input.tile_type_separations[tile_type];
-         i < input.tile_type_separations[tile_type + 1]; i++) {
-        const auto yx = state.positions[i];
+    for (auto i = 0; i < input.stat[tile_type]; i++) {
+        const auto yx =
+            state.positions[input.tile_type_separations[tile_type] + i];
         const auto y = yx >> 4;
         const auto x = yx & 0b1111;
-        for (auto j = input.tile_type_separations[tile_type];
-             j < input.tile_type_separations[tile_type + 1]; j++) {
-            const auto target_yx = target_state.positions[j];
+        for (auto j = 0; j < input.stat[tile_type]; j++) {
+            const auto target_yx =
+                target_state
+                    .positions[input.tile_type_separations[tile_type] + j];
             const auto target_y = target_yx >> 4;
             const auto target_x = target_yx & 0b1111;
             cost_matrix[{i + 1, j + 1}] = abs(y - target_y) + abs(x - target_x);
@@ -1475,14 +1513,17 @@ auto ComputeH(const State& state, const State& target_state,
 
 // A* 探索
 auto NaiveAStar() {
-    auto searched_hashes = set<HashType>(); // 距離が確定
+    auto distances = map<HashType, short>(); // 距離が確定
     auto q = radix_heap::pair_radix_heap<short, StateAction>(); //
 
     // 目標状態
     auto target_state = State();
-    target_state.tiles = RandomSpaningTree(input.N);
+    target_state.tiles = RandomTargetTree(input.N, input.stat);
     target_state.hash = ComputeHash(input.N, target_state.tiles);
     target_state.positions = ComputePositions(target_state.tiles);
+    cout << "TARGET" << endl;
+    target_state.Print();
+    cout << endl;
 
     // 初期状態生成
     auto initial_state = State();
@@ -1499,7 +1540,7 @@ auto NaiveAStar() {
     initial_state.parent = -1;
 
     state_buffer.push(initial_state);
-    searched_hashes.insert(initial_state.hash);
+    distances[initial_state.hash] = initial_state.h;
 
     for (const auto d : {Point{0, 1}, {1, 0}, {0, -1}, {-1, 0}}) {
         auto action = StateAction();
@@ -1510,44 +1551,85 @@ auto NaiveAStar() {
             continue;
         action.parent = 0;
         action.to = (unsigned char)(u.y << 4 | u.x);
-        auto tile_type = initial_state.tiles[u];
+        const auto tile_type = initial_state.tiles[u];
         action.hash = initial_state.hash ^ hash_table[v.y][v.x][tile_type] ^
                       hash_table[u.y][u.x][tile_type];
-        swap(initial_state.tiles[v], initial_state.tiles[u]);
+        assert(initial_state.tiles[v] == 0);
+        initial_state.MoveTemporarily(u);
         action.changed_h = ComputeH(initial_state, target_state, tile_type);
-        swap(initial_state.tiles[v], initial_state.tiles[u]);
+        initial_state.MoveBack();
         q.push(action.F(), action);
+        distances[action.hash] = action.F();
+
+        // sanity check
+        {
+            const auto s = action.ToState();
+            for (auto i = 1; i < 16; i++) {
+                const auto h_check = ComputeH(s, target_state, i);
+                if (h_check != s.hs[i]) {
+                    cout << "\nhが合わない、おしまい！！！" << endl;
+                    s.Print();
+                    assert(false);
+                }
+            }
+        }
     }
 
-    while (q.size()) {
+    for (auto iteration = 0ll;; iteration++) {
         const auto fv = q.top_key();
-        const auto v = q.top_value();
+        const auto old_action = q.top_value();
         q.pop();
-        if (searched_hashes.find(v.hash) != searched_hashes.end())
+        if (distances[old_action.hash] != fv)
             continue;
-        auto state = State();
 
-        // TODO
+        const auto idx_state = state_buffer.size();
+        state_buffer.push(old_action.ToState());
+        auto& state = state_buffer.back();
+
+        if ((iteration & iteration - 1) == 0) {
+            cout << "iteration " << iteration << endl;
+            state.Print();
+        }
+
         for (const auto& d : {Point{0, 1}, {1, 0}, {0, -1}, {-1, 0}}) {
             auto action = StateAction();
-            auto p_char = initial_state.positions[0];
+            auto p_char = state.positions[0];
             const auto v = Point{p_char >> 4, p_char & 0b1111};
             const auto u = v + d;
             if (!(0 <= u.x && u.x < input.N && 0 <= u.y && u.y < input.N))
                 continue;
-            action.parent = 0;
+            action.parent = idx_state;
             action.to = (unsigned char)(u.y << 4 | u.x);
-            auto tile_type = initial_state.tiles[u];
-            action.hash = initial_state.hash ^ hash_table[v.y][v.x][tile_type] ^
+            const auto tile_type = state.tiles[u];
+            action.hash = state.hash ^ hash_table[v.y][v.x][tile_type] ^
                           hash_table[u.y][u.x][tile_type];
-            swap(initial_state.tiles[v], initial_state.tiles[u]);
-            action.changed_h = ComputeH(initial_state, target_state, tile_type);
-            swap(initial_state.tiles[v], initial_state.tiles[u]);
-            q.push(action.F(), action);
-            // TODO: 修正
-        }
+            auto distance_it = distances.find(action.hash);
+            if (distance_it != distances.end() &&
+                distance_it->second <= state.f)
+                continue;
+            state.MoveTemporarily(u);
+            action.changed_h = ComputeH(state, target_state, tile_type);
+            state.MoveBack();
+            const auto f = action.F();
+            if (state.f > f) {
+                // デバッグ
+                cout << "やば！！！" << endl;
+                state.Print();
+                action.ToState().Print();
+            }
+            assert(state.f <= f);
+            if (distance_it != distances.end() && distance_it->second <= f)
+                continue;
+            distance_it->second = f;
+            q.push(f, action);
+            distances[action.hash] = f;
 
-        // TODO
+            if (action.hash == target_state.hash) {
+                cout << "target state found!!" << endl;
+                action.ToState().Print();
+                return;
+            }
+        }
     }
 }
 
@@ -1562,5 +1644,6 @@ auto Initialize() {
 int main() {
     Initialize();
     // TestSearchSpanningTree();
-    TestHungarian();
+    // TestHungarian();
+    NaiveAStar();
 }
