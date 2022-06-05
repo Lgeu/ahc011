@@ -1180,6 +1180,7 @@ abort();
 // 方針
 // 問題を与えて、部分的に解く関数を作る
 
+const auto T0 = Time();
 using Point = Vec2<int>;
 using Tiles = Board<signed char, 10, 10>;
 using HashType = unsigned long long;
@@ -1267,7 +1268,6 @@ auto RandomTargetTree(const int n, const array<int, 16>& target_stat) {
     struct Edge {
         Point from, to;
     };
-    static auto rng = Random(123478654);
     auto tiles = RandomSpaningTree(n);
     auto stat = array<int, 16>();
     for (auto y = 0; y < n; y++) {
@@ -1667,6 +1667,7 @@ struct PartialProblem {
 };
 
 struct PartialProblemResult {
+    bool success;
     vector<char> path;
     Tiles tiles;
 
@@ -2036,7 +2037,7 @@ constexpr auto sz_mb = sizeof(state_buffer) / 1024 / 1024;
 static_assert(sz_mb < 800);
 static constexpr auto kProblems = 500; // パラメータ
 auto problem_buffer = Stack<PartialProblem, kProblems>();
-
+auto global_succeeded = false;
 struct PartialStateAction {
     HashType hash; // 遷移先の状態のハッシュ
     int parent;
@@ -2140,6 +2141,10 @@ static auto SolvePartial(const vector<int> problem_ids) {
             cout << "見つからなかった！！！！！" << endl;
             assert(false);
         }
+        if ((global_succeeded && Time() - T0 > 2.7) ||
+            step >= (n * n * n * 4 / 3)) {
+            return PartialProblemResult{false};
+        }
         if (next_state_actions.size() > kBeamWidth) {
             nth_element(
                 next_state_actions.begin(),
@@ -2179,7 +2184,7 @@ static auto SolvePartial(const vector<int> problem_ids) {
             auto& state = state_buffer.back();
             if (state.h == 0) {
                 // state.Print(problem.H, problem.W)
-                return PartialProblemResult{state.Path(), state.tiles};
+                return PartialProblemResult{true, state.Path(), state.tiles};
             }
 
             for (const auto& d : {Point{0, 1}, {1, 0}, {0, -1}, {-1, 0}}) {
@@ -2238,9 +2243,10 @@ struct Input {
 
 auto input = Input();
 
-void TestSolvePartial() {
+auto TestSolvePartial() {
     // 問題を設定
     auto problem_ids = vector<int>();
+    problem_buffer.clear();
     for (int i = 0; i < kProblems; i++) {
         const auto input_stat = ComputeStat(input.N, input.N, input.tiles);
         const auto target_tiles = RandomTargetTree(input.N, input_stat);
@@ -2250,54 +2256,31 @@ void TestSolvePartial() {
                            input.N, 0, input.N);
         problem_buffer.push(problem);
         problem_buffer.back().id = problem_buffer.size() - 1;
-        const auto h = PartialState::InitialState(problem).h;
+        // const auto h = PartialState::InitialState(problem).h;
         // cout << "h=" << h << endl;
         problem_ids.push_back(i);
     }
 
     const auto result = SolvePartial(problem_ids);
 
-    result.Print();
+    return result;
 }
 
-/*
-void TestSolvePartial2() {
-    // 問題を設定
-    auto best = 1000;
-    auto best_tiles = Tiles();
-    for (int i = 0; i < 200; i++) {
-        const auto input_stat = ComputeStat(input.N, input.N, input.tiles);
-        const auto target_tiles = RandomTargetTree(input.N, input_stat);
-
-        const auto problem =
-            PartialProblem(input.N, input.N, input.tiles, target_tiles, 0,
-                           input.N, 0, input.N);
-        const auto h = PartialState::InitialState(problem).h;
-        cout << "h=" << h << endl;
-        if (chmin(best, h)) {
-            best_tiles = target_tiles;
+void Solve() {
+    auto best_result = PartialProblemResult{};
+    auto min_length = input.T + 1;
+    global_succeeded = false;
+    do {
+        const auto res = TestSolvePartial();
+        if (!res.success)
+            continue;
+        global_succeeded = true;
+        if (chmin(min_length, (int)res.path.size())) {
+            best_result = res;
         }
-    }
-
-    auto left_has_0 = false;
-    for (auto y = 0; y < input.N; y++)
-        if (best_tiles[{y, 0}] == 0)
-            left_has_0 = true;
-
-    const auto l = left_has_0 ? input.N - 1 : 0;
-    const auto r = l + 1;
-    auto problem = PartialProblem(input.N, input.N, input.tiles, best_tiles, 0,
-                                  input.N, l, r);
-    while (true) {
-        //
-        const auto result = SolvePartial(problem);
-        result.Print();
-        if (problem.IsLastProblem())
-            break;
-        problem = problem.Partials(result.tiles).back();
-    }
+    } while (min_length > input.T || Time() - T0 < 2.7);
+    best_result.Print();
 }
-*/
 
 auto Initialize() {
     input.Read();
@@ -2317,10 +2300,8 @@ auto TestTargetPatterns() {
 
 int main() {
     Initialize();
-    // TestSearchSpanningTree();
-    TestSolvePartial();
-    // TestSolvePartial2();
-    //  TestTargetPatterns();
+    // TestSolvePartial();
+    Solve();
 }
 
 // 最後に↓を貼る
