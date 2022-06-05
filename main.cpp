@@ -26,6 +26,7 @@
 #include <sstream>
 #include <stack>
 #include <string>
+#include <thread>
 #include <type_traits>
 //#include <unordered_map>
 //#include "robin_hood.h"
@@ -335,6 +336,11 @@ template <class T, int max_size> struct Stack {
     }
     inline bool empty() const { return 0 == right; }
     inline void push(const T& value) {
+        // //#ifdef ONLINE_JUDGE
+        // if (right == max_size)
+        //     this_thread::sleep_for(chrono::seconds(30));
+
+        // //#endif
         assert(right < max_size);
         new (&data()[right++]) T(value);
     }
@@ -1736,7 +1742,7 @@ struct PartialState {
     int parent;
     int problem_id;
     static unsigned char temporal_move;
-    static Stack<PartialState, 3000000> buffer;
+    static Stack<PartialState, 2500000> buffer;
     static constexpr auto kH2Coef = 2;
 
     // 初期状態生成
@@ -2024,7 +2030,7 @@ struct PartialState {
     }
 };
 unsigned char PartialState::temporal_move;
-auto PartialState::buffer = Stack<PartialState, 3000000>(); // 500 MB
+auto PartialState::buffer = Stack<PartialState, 2500000>(); // 500 MB
 auto& state_buffer = PartialState::buffer;
 constexpr auto sz_mb = sizeof(state_buffer) / 1024 / 1024;
 static_assert(sz_mb < 800);
@@ -2090,8 +2096,8 @@ static auto SolvePartial(const vector<int> problem_ids) {
     auto searched = robin_hood::unordered_set<HashType>();
 
     const auto n = problem_buffer[problem_ids[0]].H;
-    const auto kBeamWidth = 1024 * (10 * 10 * 10) / (n * n * n);
-    static auto next_state_actions = Stack<PartialStateAction, 20000>();
+    const auto kBeamWidth = 1024 * (10 * 10 * 10 * 10) / (n * n * n * n);
+    static auto next_state_actions = Stack<PartialStateAction, 32000>();
     next_state_actions.clear();
 
     for (const auto& problem_id : problem_ids) {
@@ -2171,9 +2177,10 @@ static auto SolvePartial(const vector<int> problem_ids) {
                 problem_buffer[state_buffer[state_action.parent].problem_id];
             state_buffer.push(state_action.ToState(problem));
             auto& state = state_buffer.back();
-            if (state.h == 0)
-                return state.Print(problem.H, problem.W),
-                       PartialProblemResult{state.Path(), state.tiles};
+            if (state.h == 0) {
+                // state.Print(problem.H, problem.W)
+                return PartialProblemResult{state.Path(), state.tiles};
+            }
 
             for (const auto& d : {Point{0, 1}, {1, 0}, {0, -1}, {-1, 0}}) {
                 auto action = PartialStateAction();
