@@ -1,7 +1,4 @@
-#include "robin_hood.h"
 #include <atcoder/all>
-#include <atcoder/maxflow.hpp>
-#include <iterator>
 
 #ifdef _MSC_VER
 #define _CRT_SECURE_NO_WARNINGS
@@ -1740,6 +1737,7 @@ struct PartialState {
     int problem_id;
     static unsigned char temporal_move;
     static Stack<PartialState, 3000000> buffer;
+    static constexpr auto kH2Coef = 2;
 
     // 初期状態生成
     static PartialState InitialState(const PartialProblem& problem) {
@@ -1833,7 +1831,7 @@ struct PartialState {
 
         result -= c0_same != c1_same;
 
-        return result * 2;
+        return result * kH2Coef;
     }
 
     inline int H2(const PartialProblem& problem) const {
@@ -1866,7 +1864,7 @@ struct PartialState {
             }
         }
 
-        return result * 2;
+        return result * kH2Coef;
 
         //==============================
         //     // 上
@@ -2030,7 +2028,8 @@ auto PartialState::buffer = Stack<PartialState, 3000000>(); // 500 MB
 auto& state_buffer = PartialState::buffer;
 constexpr auto sz_mb = sizeof(state_buffer) / 1024 / 1024;
 static_assert(sz_mb < 800);
-auto problem_buffer = Stack<PartialProblem, 300>();
+static constexpr auto kProblems = 500;
+auto problem_buffer = Stack<PartialProblem, kProblems>();
 
 struct PartialStateAction {
     HashType hash; // 遷移先の状態のハッシュ
@@ -2235,7 +2234,7 @@ auto input = Input();
 void TestSolvePartial() {
     // 問題を設定
     auto problem_ids = vector<int>();
-    for (int i = 0; i < 300; i++) {
+    for (int i = 0; i < kProblems; i++) {
         const auto input_stat = ComputeStat(input.N, input.N, input.tiles);
         const auto target_tiles = RandomTargetTree(input.N, input_stat);
 
