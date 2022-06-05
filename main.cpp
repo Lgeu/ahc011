@@ -1730,6 +1730,8 @@ auto ComputeH(const array<unsigned char, 100>& positions, const int tile_type,
                      problem.stat[tile_type], cost_matrix);
 }
 
+static constexpr auto kBufferSize = 2500000;
+
 struct PartialState {
     Tiles tiles;
     HashType hash; // 衝突するとどうなる？？？
@@ -1743,8 +1745,8 @@ struct PartialState {
     int parent;
     int problem_id;
     static unsigned char temporal_move;
-    static Stack<PartialState, 2500000> buffer;
-    static constexpr auto kH2Coef = 2;
+    static Stack<PartialState, kBufferSize> buffer;
+    static constexpr auto kH2Coef = 1;
 
     // 初期状態生成
     static PartialState InitialState(const PartialProblem& problem) {
@@ -2031,11 +2033,11 @@ struct PartialState {
     }
 };
 unsigned char PartialState::temporal_move;
-auto PartialState::buffer = Stack<PartialState, 2500000>(); // 500 MB
+auto PartialState::buffer = Stack<PartialState, kBufferSize>(); // 500 MB
 auto& state_buffer = PartialState::buffer;
 constexpr auto sz_mb = sizeof(state_buffer) / 1024 / 1024;
 static_assert(sz_mb < 800);
-static constexpr auto kProblems = 500; // パラメータ
+static constexpr auto kProblems = 200; // パラメータ
 auto problem_buffer = Stack<PartialProblem, kProblems>();
 auto global_succeeded = false;
 struct PartialStateAction {
@@ -2097,8 +2099,10 @@ static auto SolvePartial(const vector<int> problem_ids) {
     auto searched = robin_hood::unordered_set<HashType>();
 
     const auto n = problem_buffer[problem_ids[0]].H;
-    const auto kBeamWidth = 1024 * (10 * 10 * 10 * 10) / (n * n * n * n);
-    static auto next_state_actions = Stack<PartialStateAction, 32000>();
+    const auto kBeamWidth = 512 * (10 * 10 * 10 * 10) / (n * n * n * n);
+    // const auto kBeamWidth = 1024 * (10 * 10 * 10) / (n * n * n); //
+    //  パラメータ
+    static auto next_state_actions = Stack<PartialStateAction, 32000 * 2>();
     next_state_actions.clear();
 
     for (const auto& problem_id : problem_ids) {
@@ -2141,8 +2145,7 @@ static auto SolvePartial(const vector<int> problem_ids) {
             cout << "見つからなかった！！！！！" << endl;
             assert(false);
         }
-        if ((global_succeeded && Time() - T0 > 2.7) ||
-            step >= (n * n * n * 4 / 3)) {
+        if ((global_succeeded && Time() - T0 > 2.7) || step >= (n * n * n)) {
             return PartialProblemResult{false};
         }
         if (next_state_actions.size() > kBeamWidth) {
