@@ -46,11 +46,6 @@
 #ifdef __clang__
 #pragma clang attribute push(__attribute__((target("arch=skylake"))),          \
                              apply_to = function)
-// 最後に↓を貼る
-#ifdef __clang__
-#pragma clang attribute pop
-#endif
-// 最後に↑を貼る
 #elif defined(__GNUC__)
 #pragma GCC target(                                                            \
     "sse,sse2,sse3,ssse3,sse4,popcnt,abm,mmx,avx,avx2,tune=native")
@@ -1741,6 +1736,7 @@ struct PartialState {
     short g;       // 現在までの距離
     short h;       // ヒューリスティック関数
     array<short, 16> hs; // ヒューリスティック関数 (タイルの種類ごと)
+    short h2;
     array<unsigned char, 100>
         positions; // タイルの種類ごとの場所 y/x 4 ビットずつ
     int parent;
@@ -1756,16 +1752,19 @@ struct PartialState {
         auto hs = array<short, 16>();
         for (auto i = 1; i < 16; i++)
             h += hs[i] = ComputeH(positions, i, problem);
-        return PartialState{problem.tiles,
-                            ComputeHash(problem.H, problem.W, problem.tiles) ^
-                                problem.id,
-                            h,
-                            0,
-                            h,
-                            hs,
-                            positions,
-                            -1,
-                            problem.id};
+        auto res = PartialState{
+            problem.tiles,
+            ComputeHash(problem.H, problem.W, problem.tiles) ^ problem.id,
+            h,
+            0,
+            h,
+            hs,
+            -999,
+            positions,
+            -1,
+            problem.id};
+        res.h2 = res.H2(problem);
+        return res;
     }
 
     // positions だけ一時的に変化させる
@@ -1795,7 +1794,52 @@ struct PartialState {
         temporal_move = 0xff;
     }
 
-    inline auto H2(const PartialProblem& problem) const {
+    inline auto H2Point(const PartialProblem& problem, const Point& p0,
+                        const Point& p1) const {
+        auto result = 0;
+
+        const auto y0 = p0.y;
+        const auto x0 = p0.x;
+        const auto c0_same = tiles[{y0, x0}] == problem.target_tiles[{y0, x0}];
+        const auto u0_same = y0 == 0 || tiles[{y0 - 1, x0}] ==
+                                            problem.target_tiles[{y0 - 1, x0}];
+        const auto d0_same =
+            y0 == problem.H - 1 ||
+            tiles[{y0 + 1, x0}] == problem.target_tiles[{y0 + 1, x0}];
+        const auto l0_same = x0 == 0 || tiles[{y0, x0 - 1}] ==
+                                            problem.target_tiles[{y0, x0 - 1}];
+        const auto r0_same =
+            x0 == problem.W - 1 ||
+            tiles[{y0, x0 + 1}] == problem.target_tiles[{y0, x0 + 1}];
+        result += c0_same != u0_same;
+        result += c0_same != d0_same;
+        result += c0_same != l0_same;
+        result += c0_same != r0_same;
+
+        const auto y1 = p1.y;
+        const auto x1 = p1.x;
+        const auto c1_same = tiles[{y1, x1}] == problem.target_tiles[{y1, x1}];
+        const auto u1_same = y1 == 0 || tiles[{y1 - 1, x1}] ==
+                                            problem.target_tiles[{y1 - 1, x1}];
+        const auto d1_same =
+            y1 == problem.H - 1 ||
+            tiles[{y1 + 1, x1}] == problem.target_tiles[{y1 + 1, x1}];
+        const auto l1_same = x1 == 0 || tiles[{y1, x1 - 1}] ==
+                                            problem.target_tiles[{y1, x1 - 1}];
+        const auto r1_same =
+            x1 == problem.W - 1 ||
+            tiles[{y1, x1 + 1}] == problem.target_tiles[{y1, x1 + 1}];
+        result += c1_same != u1_same;
+        result += c1_same != d1_same;
+        result += c1_same != l1_same;
+        result += c1_same != r1_same;
+
+        result -= c0_same != c1_same;
+
+        return result * 2;
+    }
+
+    inline int H2(const PartialProblem& problem) const {
         // return 0;
         auto result = 0;
         for (auto y = 0; y <= problem.H; y++) {
@@ -1825,7 +1869,7 @@ struct PartialState {
             }
         }
 
-        return result * 1;
+        return result * 2;
 
         //==============================
         //     // 上
@@ -1988,6 +2032,7 @@ unsigned char PartialState::temporal_move;
 auto PartialState::buffer = Stack<PartialState, 3000000>(); // 500 MB
 auto& state_buffer = PartialState::buffer;
 constexpr auto sz_mb = sizeof(state_buffer) / 1024 / 1024;
+static_assert(sz_mb < 800);
 auto problem_buffer = Stack<PartialProblem, 300>();
 
 struct PartialStateAction {
@@ -2036,6 +2081,7 @@ struct PartialStateAction {
         state.f = state.g + state.h;
         state.hs = old_state.hs;
         state.hs[tile_type] = changed_h;
+        state.h2 = h2;
         state.problem_id = problem.id;
         return state;
     }
@@ -2125,18 +2171,18 @@ static auto SolvePartial(const vector<int> problem_ids) {
         const auto state_actions = next_state_actions;
         next_state_actions.clear();
 
-        if (step == 0) {
-            for (int i = 0; i < 10; i += 5) {
-                auto action0 = state_actions[i];
-                auto& problem =
-                    problem_buffer[state_buffer[action0.parent].problem_id];
-                auto state = action0.ToState(problem);
-                cout << "action " << i << endl;
-                cout << "problem.id=" << problem.id << endl;
-                cout << "state:" << endl << endl;
-                state.Print(problem.H, problem.W);
-            }
-        }
+        // if (step == 0) {
+        //     for (int i = 0; i < 10; i += 5) {
+        //         auto action0 = state_actions[i];
+        //         auto& problem =
+        //             problem_buffer[state_buffer[action0.parent].problem_id];
+        //         auto state = action0.ToState(problem);
+        //         cout << "action " << i << endl;
+        //         cout << "problem.id=" << problem.id << endl;
+        //         cout << "state:" << endl << endl;
+        //         state.Print(problem.H, problem.W);
+        //     }
+        // }
         for (const auto& state_action : state_actions) {
             const auto idx_state = state_buffer.size();
             const auto& problem =
@@ -2167,10 +2213,15 @@ static auto SolvePartial(const vector<int> problem_ids) {
                 if (searched.contains(action.hash))
                     continue;
                 searched.insert(action.hash);
+                action.h2 = state.h2;
+
+                action.h2 -= state.H2Point(problem, v, u);
                 state.MoveTemporarily(u, problem.tile_type_separations);
                 action.changed_h =
                     ComputeH(state.positions, tile_type, problem);
-                action.h2 = state.H2(problem);
+                action.h2 += state.H2Point(problem, v, u);
+                // assert(action.h2 == state.H2(problem));
+
                 state.MoveBack();
 
                 next_state_actions.push(action);
@@ -2200,8 +2251,6 @@ auto input = Input();
 
 void TestSolvePartial() {
     // 問題を設定
-    auto best = 999999999;
-    // auto best_problem = PartialProblem();
     auto problem_ids = vector<int>();
     for (int i = 0; i < 300; i++) {
         const auto input_stat = ComputeStat(input.N, input.N, input.tiles);
@@ -2214,9 +2263,6 @@ void TestSolvePartial() {
         problem_buffer.back().id = problem_buffer.size() - 1;
         const auto h = PartialState::InitialState(problem).h;
         cout << "h=" << h << endl;
-        // if (chmin(best, h)) {
-        //     best_problem = problem;
-        // }
         problem_ids.push_back(i);
     }
 
@@ -2287,3 +2333,9 @@ int main() {
     // TestSolvePartial2();
     //  TestTargetPatterns();
 }
+
+// 最後に↓を貼る
+#ifdef __clang__
+#pragma clang attribute pop
+#endif
+// 最後に↑を貼る
