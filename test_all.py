@@ -5,7 +5,7 @@ from threading import Thread
 from subprocess import Popen, PIPE
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-N = 50
+N = 100
 
 scores = [0] * N
 
@@ -26,18 +26,19 @@ def run(cmd, name):
     proc.wait()
     return proc
 
-# out_dir = Path("out") / datetime.now().isoformat()
-# out_dir.mkdir()
-# with ThreadPoolExecutor(7) as executor:
-#     futures = []
-#     for i in range(N):
-#         out_file = out_dir / f"{i:04d}.txt"
-#         cmd = f"./tools/target/release/tester ./a.out < ./tools/in/{i:04d}.txt > {out_file}"
-#         futures.append(executor.submit(run, cmd, i))
-#     as_completed(futures)
-#
-# print(f"Mean Score = {sum(scores) / len(scores)}")
+out_dir = Path("out") / datetime.now().isoformat()
+out_dir.mkdir()
+with ThreadPoolExecutor(4) as executor:
+    futures = []
+    for i in range(N):
+        out_file = out_dir / f"{i:04d}.txt"
+        #cmd = f"./tools/target/release/tester ./a.out < ./tools/in/{i:04d}.txt > {out_file}"
+        cmd = f"./a.out < ./tools/in/{i:04d}.txt > {out_file} && ./tools/target/release/vis ./tools/in/{i:04d}.txt {out_file}"
+        futures.append(executor.submit(run, cmd, i))
+    as_completed(futures)
 
-for i in range(N):
-    cmd = f"time ./a.out < ./tools/in/{i:04d}.txt"
-    run(cmd, f"{i}")
+print(f"Mean Score = {sum(scores) / len(scores)}")
+
+# for i in range(N):
+#     cmd = f"time ./a.out < ./tools/in/{i:04d}.txt"
+#     run(cmd, f"{i}")
