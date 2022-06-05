@@ -2089,9 +2089,9 @@ static auto SolvePartial(const vector<int> problem_ids) {
 
     auto searched = robin_hood::unordered_set<HashType>();
 
-    constexpr auto kBeamWidth = 2048;
-    static auto next_state_actions =
-        Stack<PartialStateAction, kBeamWidth * 4>();
+    const auto n = problem_buffer[problem_ids[0]].H;
+    const auto kBeamWidth = 1024 * (10 * 10 * 10) / (n * n * n);
+    static auto next_state_actions = Stack<PartialStateAction, 20000>();
     next_state_actions.clear();
 
     for (const auto& problem_id : problem_ids) {
