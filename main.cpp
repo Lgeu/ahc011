@@ -1271,7 +1271,7 @@ auto RandomTargetTree(const int n, const array<int, 16>& target_stat) {
         }
     }
     for (auto trial = 0ll;; trial++) {
-        if (trial % 1024 == 0) { // パラメータ
+        if (trial % 128 == 0) { // パラメータ
             tiles = RandomSpaningTree(n);
             stat = ComputeStat(n, n, tiles);
         }
@@ -1334,6 +1334,7 @@ auto RandomTargetTree(const int n, const array<int, 16>& target_stat) {
                 }
             }
             if (best_edges.size() == 0) {
+                // cout << "trial=" << trial % 1024 << endl;
                 return tiles;
             }
 
@@ -2028,7 +2029,7 @@ auto PartialState::buffer = Stack<PartialState, 3000000>(); // 500 MB
 auto& state_buffer = PartialState::buffer;
 constexpr auto sz_mb = sizeof(state_buffer) / 1024 / 1024;
 static_assert(sz_mb < 800);
-static constexpr auto kProblems = 500;
+static constexpr auto kProblems = 500; // パラメータ
 auto problem_buffer = Stack<PartialProblem, kProblems>();
 
 struct PartialStateAction {
