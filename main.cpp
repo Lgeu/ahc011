@@ -2019,17 +2019,17 @@ struct PartialState {
     }
 
     inline void Print(const int h, const int w) const {
-        cout << "State" << endl;
-        PrintTiles(h, w, tiles);
-        cout << "hash=" << hash << endl;
-        cout << "f=" << f << endl;
-        cout << "g=" << g << endl;
-        cout << "h=" << this->h << endl;
-        cout << "hs=";
-        for (const auto hi : hs)
-            cout << hi << ",";
-        cout << endl;
-        cout << "parent=" << parent << endl;
+        // cout << "State" << endl;
+        // PrintTiles(h, w, tiles);
+        // cout << "hash=" << hash << endl;
+        // cout << "f=" << f << endl;
+        // cout << "g=" << g << endl;
+        // cout << "h=" << this->h << endl;
+        // cout << "hs=";
+        // for (const auto hi : hs)
+        //     cout << hi << ",";
+        // cout << endl;
+        // cout << "parent=" << parent << endl;
     }
 };
 unsigned char PartialState::temporal_move;
@@ -2142,8 +2142,7 @@ static auto SolvePartial(const vector<int> problem_ids) {
 
     for (auto step = 0;; step++) {
         if (next_state_actions.size() == 0) {
-            cout << "見つからなかった！！！！！" << endl;
-            assert(false);
+            return PartialProblemResult{false};
         }
         if ((global_succeeded && Time() - T0 > 2.7) || step >= (n * n * n)) {
             return PartialProblemResult{false};
