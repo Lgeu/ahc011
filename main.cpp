@@ -1797,61 +1797,146 @@ struct PartialState {
 
     inline auto H2(const PartialProblem& problem) const {
         // return 0;
-        auto scores = Board<bool, 10, 10>();
-        for (auto y = 0; y < problem.H; y++) {
-            for (auto x = 0; x < problem.W; x++) {
-                if (tiles[{y, x}] == problem.target_tiles[{y, x}] &&
-                    (y == 0 ||
-                     tiles[{y - 1, x}] == problem.target_tiles[{y - 1, x}]) &&
-                    (x == 0 ||
-                     tiles[{y, x - 1}] == problem.target_tiles[{y, x - 1}])) {
-                    scores[{y, x}] = true;
-                } else
-                    break;
-            }
-            for (auto x = problem.W - 1; x >= 0; x--) {
-                if (tiles[{y, x}] == problem.target_tiles[{y, x}] &&
-                    (y == 0 ||
-                     tiles[{y - 1, x}] == problem.target_tiles[{y - 1, x}]) &&
-                    (x == problem.W - 1 ||
-                     tiles[{y, x + 1}] == problem.target_tiles[{y, x + 1}])) {
-                    scores[{y, x}] = true;
-                } else
-                    break;
-            }
-        }
-
-        for (auto y = problem.H - 1; y >= 0; y--) {
-            for (auto x = 0; x < problem.W; x++) {
-                if (tiles[{y, x}] == problem.target_tiles[{y, x}] &&
-                    (y == problem.H - 1 ||
-                     tiles[{y + 1, x}] == problem.target_tiles[{y + 1, x}]) &&
-                    (x == 0 ||
-                     tiles[{y, x - 1}] == problem.target_tiles[{y, x - 1}])) {
-                    scores[{y, x}] = true;
-                } else
-                    break;
-            }
-            for (auto x = problem.W - 1; x >= 0; x--) {
-                if (tiles[{y, x}] == problem.target_tiles[{y, x}] &&
-                    (y == problem.H - 1 ||
-                     tiles[{y + 1, x}] == problem.target_tiles[{y + 1, x}]) &&
-                    (x == problem.W - 1 ||
-                     tiles[{y, x + 1}] == problem.target_tiles[{y, x + 1}])) {
-                    scores[{y, x}] = true;
-                } else
-                    break;
-            }
-        }
-
         auto result = 0;
-        for (auto y = 0; y < problem.H; y++) {
-            for (auto x = 0; x < problem.W; x++) {
-                result -= scores[{y, x}];
+        for (auto y = 0; y <= problem.H; y++) {
+            for (auto x = 0; x <= problem.W; x++) {
+                if (x != problem.W) {
+                    const auto u_same =
+                        y == 0 ? true
+                               : tiles[{y - 1, x}] ==
+                                     problem.target_tiles[{y - 1, x}];
+                    const auto d_same =
+                        y == problem.H
+                            ? true
+                            : tiles[{y, x}] == problem.target_tiles[{y, x}];
+                    result += u_same != d_same;
+                }
+                if (y != problem.H) {
+                    const auto l_same =
+                        x == 0 ? true
+                               : tiles[{y, x - 1}] ==
+                                     problem.target_tiles[{y, x - 1}];
+                    const auto r_same =
+                        x == problem.W
+                            ? true
+                            : tiles[{y, x}] == problem.target_tiles[{y, x}];
+                    result += l_same != r_same;
+                }
             }
         }
 
-        return result;
+        return result * 1;
+
+        //==============================
+        //     // 上
+        //     for (auto y = 0; y < problem.H; y++) {
+        //         for (auto x = 0; x < problem.W; x++) {
+        //             if (problem.target_tiles[{y, x}] == 0 ||
+        //                 tiles[{y, x}] != problem.target_tiles[{y, x}]) {
+        //                 result += y;
+        //                 goto end_u;
+        //             }
+        //         }
+        //     }
+        // end_u:
+        //     // 下
+        //     for (auto y = problem.H - 1; y >= 0; y--) {
+        //         for (auto x = 0; x < problem.W; x++) {
+        //             if (problem.target_tiles[{y, x}] == 0 ||
+        //                 tiles[{y, x}] != problem.target_tiles[{y, x}]) {
+        //                 result += problem.H - 1 - y;
+        //                 goto end_d;
+        //             }
+        //         }
+        //     }
+        // end_d:
+        //     // 左
+        //     for (auto x = 0; x < problem.W; x++) {
+        //         for (auto y = 0; y < problem.H; y++) {
+        //             if (problem.target_tiles[{y, x}] == 0 ||
+        //                 tiles[{y, x}] != problem.target_tiles[{y, x}]) {
+        //                 result += x;
+        //                 goto end_l;
+        //             }
+        //         }
+        //     }
+        // end_l:
+        //     // 右
+        //     for (auto x = problem.W - 1; x >= 0; x--) {
+        //         for (auto y = 0; y < problem.H; y++) {
+        //             if (problem.target_tiles[{y, x}] == 0 ||
+        //                 tiles[{y, x}] != problem.target_tiles[{y, x}]) {
+        //                 result += problem.W - 1 - x;
+        //                 goto end_r;
+        //             }
+        //         }
+        //     }
+        // end_r:
+
+        // return result * -10;
+
+        // ===========================================
+        {
+            auto scores = Board<bool, 10, 10>();
+            for (auto y = 0; y < problem.H; y++) {
+                for (auto x = 0; x < problem.W; x++) {
+                    if (tiles[{y, x}] == problem.target_tiles[{y, x}] &&
+                        (y == 0 || tiles[{y - 1, x}] ==
+                                       problem.target_tiles[{y - 1, x}]) &&
+                        (x == 0 || tiles[{y, x - 1}] ==
+                                       problem.target_tiles[{y, x - 1}])) {
+                        scores[{y, x}] = true;
+                    } else
+                        break;
+                }
+                for (auto x = problem.W - 1; x >= 0; x--) {
+                    if (tiles[{y, x}] == problem.target_tiles[{y, x}] &&
+                        (y == 0 || tiles[{y - 1, x}] ==
+                                       problem.target_tiles[{y - 1, x}]) &&
+                        (x == problem.W - 1 ||
+                         tiles[{y, x + 1}] ==
+                             problem.target_tiles[{y, x + 1}])) {
+                        scores[{y, x}] = true;
+                    } else
+                        break;
+                }
+            }
+
+            for (auto y = problem.H - 1; y >= 0; y--) {
+                for (auto x = 0; x < problem.W; x++) {
+                    if (tiles[{y, x}] == problem.target_tiles[{y, x}] &&
+                        (y == problem.H - 1 ||
+                         tiles[{y + 1, x}] ==
+                             problem.target_tiles[{y + 1, x}]) &&
+                        (x == 0 || tiles[{y, x - 1}] ==
+                                       problem.target_tiles[{y, x - 1}])) {
+                        scores[{y, x}] = true;
+                    } else
+                        break;
+                }
+                for (auto x = problem.W - 1; x >= 0; x--) {
+                    if (tiles[{y, x}] == problem.target_tiles[{y, x}] &&
+                        (y == problem.H - 1 ||
+                         tiles[{y + 1, x}] ==
+                             problem.target_tiles[{y + 1, x}]) &&
+                        (x == problem.W - 1 ||
+                         tiles[{y, x + 1}] ==
+                             problem.target_tiles[{y, x + 1}])) {
+                        scores[{y, x}] = true;
+                    } else
+                        break;
+                }
+            }
+
+            auto result = 0;
+            for (auto y = 0; y < problem.H; y++) {
+                for (auto x = 0; x < problem.W; x++) {
+                    result -= scores[{y, x}];
+                }
+            }
+
+            return result;
+        }
     }
 
     inline auto Path() const {
