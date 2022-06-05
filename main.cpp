@@ -1181,7 +1181,7 @@ constexpr auto kL = 1;
 constexpr auto kU = 2;
 constexpr auto kR = 4;
 constexpr auto kD = 8;
-static auto rng = Random(913418416u);
+static auto rng = Random((913418416u ^ (unsigned)(Time() * 10000)) | 1u);
 const auto kBoxDrawings =
     array<string, 16>{" ", "╸", "╹", "┛", "╺", "━", "┗", "┻",
                       "╻", "┓", "┃", "┫", "┏", "┳", "┣", "╋"};
@@ -1205,7 +1205,6 @@ void PrintTiles(const int h, const int w, const Tiles& b) {
 
 // ランダムに全域木をつくる
 auto RandomSpaningTree(const int n) {
-    static auto rng = Random(123478654);
     struct Edge {
         Point from, to;
     };
