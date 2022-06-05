@@ -1228,7 +1228,6 @@ auto RandomSpaningTree(const int n) {
         const auto r = rng.randint(idx_edges, (int)edges.size());
         swap(edges[idx_edges], edges[r]);
         const auto& edge = edges[idx_edges];
-        // cout << edge.from << " " << edge.to << endl;
         if (!uf.same(edge.from.y * n + edge.from.x,
                      edge.to.y * n + edge.to.x)) {
             uf.merge(edge.from.y * n + edge.from.x, edge.to.y * n + edge.to.x);
@@ -1547,7 +1546,6 @@ auto Hungarian(const int h, const int w, const Board<int, 50, 50>& A) {
         } while (x0 != 0);
     }
 
-    // cout << "Hungarian " << -V[0] << endl;
     return -V[0];
 }
 
@@ -1724,7 +1722,6 @@ auto ComputeH(const array<unsigned char, 100>& positions, const int tile_type,
         }
     }
     assert(problem.target_box_stat[tile_type] <= problem.stat[tile_type]);
-    // cost_matrix.Print();
     return Hungarian(problem.target_box_stat[tile_type],
                      problem.stat[tile_type], cost_matrix);
 }
@@ -2113,8 +2110,6 @@ static auto SolvePartial(const vector<int> problem_ids) {
             const auto v = Point{p_char >> 4, p_char & 0b1111};
             const auto u = v + d;
             if (!(0 <= u.x && u.x < problem.W && 0 <= u.y && u.y < problem.H)) {
-                cout << (0 <= u.x) << (u.x < problem.W) << (0 <= u.y)
-                     << (u.y < problem.H) << endl;
                 continue;
             }
             action.parent = problem_id;
@@ -2152,37 +2147,25 @@ static auto SolvePartial(const vector<int> problem_ids) {
         }
 
         if (step % 30 == 1) {
-            const auto& state =
-                next_state_actions[rng.randint(next_state_actions.size())];
-            cout << "step " << step << endl;
-            const auto& problem =
-                problem_buffer[state_buffer[state.parent].problem_id];
-            state.ToState(problem).Print(problem.H, problem.W);
+            // const auto& state =
+            //     next_state_actions[rng.randint(next_state_actions.size())];
+            // cout << "step " << step << endl;
+            // const auto& problem =
+            //     problem_buffer[state_buffer[state.parent].problem_id];
+            // state.ToState(problem).Print(problem.H, problem.W);
 
-            auto problem_id_counts = std::map<int, int>();
-            for (auto& a : next_state_actions)
-                problem_id_counts[state_buffer[a.parent].problem_id]++;
-            cout << "problem_id_counts:";
-            for (auto& [problem_id, count] : problem_id_counts)
-                cout << " " << problem_id << "(" << count << "),";
-            cout << endl;
+            // auto problem_id_counts = std::map<int, int>();
+            // for (auto& a : next_state_actions)
+            //     problem_id_counts[state_buffer[a.parent].problem_id]++;
+            // cout << "problem_id_counts:";
+            // for (auto& [problem_id, count] : problem_id_counts)
+            //     cout << " " << problem_id << "(" << count << "),";
+            // cout << endl;
         }
 
         const auto state_actions = next_state_actions;
         next_state_actions.clear();
 
-        // if (step == 0) {
-        //     for (int i = 0; i < 10; i += 5) {
-        //         auto action0 = state_actions[i];
-        //         auto& problem =
-        //             problem_buffer[state_buffer[action0.parent].problem_id];
-        //         auto state = action0.ToState(problem);
-        //         cout << "action " << i << endl;
-        //         cout << "problem.id=" << problem.id << endl;
-        //         cout << "state:" << endl << endl;
-        //         state.Print(problem.H, problem.W);
-        //     }
-        // }
         for (const auto& state_action : state_actions) {
             const auto idx_state = state_buffer.size();
             const auto& problem =
@@ -2262,7 +2245,7 @@ void TestSolvePartial() {
         problem_buffer.push(problem);
         problem_buffer.back().id = problem_buffer.size() - 1;
         const auto h = PartialState::InitialState(problem).h;
-        cout << "h=" << h << endl;
+        // cout << "h=" << h << endl;
         problem_ids.push_back(i);
     }
 
